@@ -1,0 +1,49 @@
+name: MovieAlert Worker
+
+on:
+  schedule:
+    # 매 5분마다 실행 (UTC 기준 — 한국 시간 = UTC+9)
+    - cron: '*/5 * * * *'
+  # 수동 실행 버튼 (GitHub Actions 탭에서 직접 실행 가능)
+  workflow_dispatch:
+
+jobs:
+  check-movies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8   # 5분 주기이므로 8분 초과 시 강제 종료
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Python 패키지 설치
+        run: pip install -r requirements.txt
+
+      # Playwright 브라우저 캐싱 (CGV 크롤링용)
+      - name: Playwright 캐시 복원
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Playwright Chromium 설치
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: playwright install chromium --with-deps
+
+      - name: Playwright 시스템 의존성 설치 (캐시 히트 시에도 필요)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: playwright install-deps chromium
+
+      - name: 워커 실행
+        env:
+          SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python worker/main_worker.py

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:cgvproject.gitbook.io)",
+      "WebFetch(domain:github.com)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/python -c \":*)",
+      "WebFetch(domain:www.megabox.co.kr)",
+      "WebFetch(domain:www.cgv.co.kr)",
+      "WebFetch(domain:www.lottecinema.co.kr)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(.venv/bin/python3:*)",
+      "Bash(.venv/bin/python main.py --check)",
+      "Bash(python3 -c \":*)"
+    ]
+  }
+}

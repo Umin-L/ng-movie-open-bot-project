@@ -1,0 +1,22 @@
+{
+  "telegram": {
+    "bot_token": "YOUR_BOT_TOKEN_HERE",
+    "chat_id": "YOUR_CHAT_ID_HERE"
+  },
+  "check_interval_minutes": 5,
+  "movies": [
+    "명탐정 코난",
+    "어벤져스"
+  ],
+  "branches": [],
+  "event_labels": [
+    "무대인사",
+    "GV",
+    "시사회"
+  ],
+  "theaters": {
+    "cgv": true,
+    "lotte": true,
+    "megabox": true
+  }
+}

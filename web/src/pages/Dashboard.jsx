@@ -1,0 +1,158 @@
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+
+const THEATER_BADGE = {
+  'CGV':    { cls: 'badge-cgv',     icon: '🔴' },
+  '롯데시네마': { cls: 'badge-lotte',   icon: '🎯' },
+  '메가박스':  { cls: 'badge-megabox', icon: '🟣' },
+}
+
+function timeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const min  = Math.floor(diff / 60000)
+  if (min < 1)  return '방금 전'
+  if (min < 60) return `${min}분 전`
+  const h = Math.floor(min / 60)
+  if (h < 24)   return `${h}시간 전`
+  return `${Math.floor(h / 24)}일 전`
+}
+
+export default function Dashboard({ session }) {
+  const [detections, setDetections] = useState([])
+  const [profile,    setProfile]    = useState(null)
+  const [config,     setConfig]     = useState(null)
+  const [loading,    setLoading]    = useState(true)
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  async function loadData() {
+    setLoading(true)
+    const uid = session.user.id
+
+    const [{ data: dets }, { data: prof }, { data: cfg }] = await Promise.all([
+      supabase.from('detected_movies')
+        .select('*')
+        .eq('user_id', uid)
+        .order('detected_at', { ascending: false })
+        .limit(50),
+      supabase.from('user_profiles').select('*').eq('id', uid).single(),
+      supabase.from('user_configs').select('*').eq('user_id', uid).single(),
+    ])
+
+    setDetections(dets || [])
+    setProfile(prof)
+    setConfig(cfg)
+    setLoading(false)
+  }
+
+  const isTelegramSet = profile?.telegram_chat_id?.trim()
+  const watchedMovies = config?.movies?.length ? config.movies.join(', ') : '전체'
+  const watchedBranch = config?.branches?.length ? config.branches.join(', ') : '전국'
+
+  // 통계
+  const today       = detections.filter(d => new Date(d.detected_at).toDateString() === new Date().toDateString())
+  const eventCount  = detections.filter(d => d.event_label).length
+
+  if (loading) {
+    return <div style={{ textAlign:'center', padding:'60px' }}><div className="spinner" /></div>
+  }
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 20 }}>대시보드</h2>
+
+      {/* 텔레그램 미설정 경고 */}
+      {!isTelegramSet && (
+        <div className="alert alert-info" style={{ marginBottom: 20 }}>
+          📱 텔레그램이 연결되지 않았습니다. <Link to="/settings">설정</Link>에서 연결해 주세요.
+        </div>
+      )}
+
+      {/* 감시 현황 요약 */}
+      <div className="stat-row">
+        <div className="stat-card">
+          <div className="stat-number">{detections.length}</div>
+          <div className="stat-label">전체 감지</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-number">{today.length}</div>
+          <div className="stat-label">오늘 감지</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-number">{eventCount}</div>
+          <div className="stat-label">이벤트 감지</div>
+        </div>
+      </div>
+
+      {/* 감시 설정 요약 */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 12 }}>
+          <span className="card-title" style={{ marginBottom: 0 }}>현재 감시 설정</span>
+          <Link to="/settings" style={{ fontSize: 13, color: 'var(--primary)' }}>수정 →</Link>
+        </div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap: 16, fontSize: 13 }}>
+          <div>
+            <span style={{ color:'var(--text-muted)' }}>영화: </span>
+            <strong>{watchedMovies}</strong>
+          </div>
+          <div>
+            <span style={{ color:'var(--text-muted)' }}>지점: </span>
+            <strong>{watchedBranch}</strong>
+          </div>
+          <div>
+            <span style={{ color:'var(--text-muted)' }}>텔레그램: </span>
+            {isTelegramSet
+              ? <span className="connected-badge">✅ 연결됨</span>
+              : <span style={{ color:'var(--danger)' }}>미연결</span>
+            }
+          </div>
+        </div>
+      </div>
+
+      {/* 감지 이력 */}
+      <div className="section-title">최근 감지 이력</div>
+
+      {detections.length === 0 ? (
+        <div className="empty-state">
+          <div className="icon">🍿</div>
+          <p>아직 감지된 영화가 없습니다.</p>
+          <p style={{ marginTop: 6 }}>설정에서 감시할 영화를 추가하면<br />예매 오픈 시 텔레그램으로 알림을 받습니다.</p>
+        </div>
+      ) : (
+        <div className="movie-list">
+          {detections.map(d => {
+            const badge = THEATER_BADGE[d.theater] || { cls: '', icon: '🎬' }
+            return (
+              <div className="movie-item" key={d.id}>
+                <div className="movie-item-left">
+                  <div style={{ display:'flex', alignItems:'center', gap: 8 }}>
+                    <span className={`badge ${badge.cls}`}>{badge.icon} {d.theater}</span>
+                    {d.branch && (
+                      <span style={{ fontSize: 12, color:'var(--text-muted)' }}>📍 {d.branch}</span>
+                    )}
+                    {d.event_label && (
+                      <span className="badge badge-event">🎤 {d.event_label}</span>
+                    )}
+                  </div>
+                  <div className="movie-title">{d.title}</div>
+                  <div className="movie-meta">
+                    <span>🕐 {timeAgo(d.detected_at)}</span>
+                    <span>{new Date(d.detected_at).toLocaleString('ko-KR')}</span>
+                  </div>
+                </div>
+                <div className="movie-item-right">
+                  {d.booking_url && (
+                    <a href={d.booking_url} target="_blank" rel="noreferrer">예매하기</a>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
