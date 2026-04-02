@@ -97,9 +97,10 @@ def send_telegram(chat_id: str, movies: list[MovieInfo]) -> None:
 # ── 사용자별 영화 체크 ──────────────────────────────────────
 def check_for_user(user_id: str, cfg: dict) -> list[MovieInfo]:
     """사용자 설정에 따라 영화 체커를 실행하고 예매 가능 목록을 반환한다."""
-    keywords  = cfg.get("movies", [])
-    branches  = cfg.get("branches", []) or None
-    ev_labels = cfg.get("event_labels", [])
+    keywords    = cfg.get("movies", [])
+    branches    = cfg.get("branches", []) or None
+    ev_labels   = cfg.get("event_labels", [])
+    days_ahead  = int(cfg.get("check_days_ahead", 0))
 
     checkers = []
     if cfg.get("cgv_enabled", True):
@@ -113,7 +114,7 @@ def check_for_user(user_id: str, cfg: dict) -> list[MovieInfo]:
     for checker in checkers:
         name = checker.__class__.__name__
         try:
-            movies   = checker.get_bookable_movies(branches=branches)
+            movies   = checker.get_bookable_movies(branches=branches, days_ahead=days_ahead)
             filtered = checker.filter_by_keywords(movies, keywords)
 
             # 이벤트 필터

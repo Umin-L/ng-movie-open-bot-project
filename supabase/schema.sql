@@ -27,10 +27,11 @@ CREATE TABLE IF NOT EXISTS user_configs (
   movies         TEXT[]  DEFAULT '{}',
   branches       TEXT[]  DEFAULT '{}',
   event_labels   TEXT[]  DEFAULT ARRAY['무대인사','GV','시사회'],
-  cgv_enabled    BOOLEAN DEFAULT true,
-  lotte_enabled  BOOLEAN DEFAULT true,
-  megabox_enabled BOOLEAN DEFAULT true,
-  updated_at     TIMESTAMPTZ DEFAULT NOW()
+  cgv_enabled      BOOLEAN DEFAULT true,
+  lotte_enabled    BOOLEAN DEFAULT true,
+  megabox_enabled  BOOLEAN DEFAULT true,
+  check_days_ahead INTEGER DEFAULT 0,
+  updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ── 사용자별 감지 상태 (중복 알림 방지용) ─────────────────
@@ -82,8 +83,9 @@ CREATE POLICY "configs_select" ON user_configs FOR SELECT USING (auth.uid() = us
 CREATE POLICY "configs_insert" ON user_configs FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "configs_update" ON user_configs FOR UPDATE USING (auth.uid() = user_id);
 
--- 감지 상태 (읽기만)
+-- 감지 상태 (읽기 + 삭제 — 상태 초기화 버튼용)
 CREATE POLICY "states_select" ON movie_states FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "states_delete" ON movie_states FOR DELETE USING (auth.uid() = user_id);
 
 -- 감지 이력 (읽기만)
 CREATE POLICY "detections_select" ON detected_movies FOR SELECT USING (auth.uid() = user_id);

@@ -60,6 +60,7 @@ export default function Settings({ session }) {
   const [cgv,       setCgv]      = useState(true)
   const [lotte,     setLotte]    = useState(true)
   const [megabox,   setMegabox]  = useState(true)
+  const [daysAhead, setDaysAhead] = useState(0)
 
   // 텔레그램
   const [chatId,    setChatId]   = useState('')
@@ -88,6 +89,7 @@ export default function Settings({ session }) {
       setCgv(cfg.cgv_enabled ?? true)
       setLotte(cfg.lotte_enabled ?? true)
       setMegabox(cfg.megabox_enabled ?? true)
+      setDaysAhead(cfg.check_days_ahead ?? 0)
     }
     if (prof?.telegram_chat_id) {
       setChatId(prof.telegram_chat_id)
@@ -133,11 +135,12 @@ export default function Settings({ session }) {
     const { error } = await supabase.from('user_configs').update({
       movies,
       branches,
-      event_labels: evLabels,
-      cgv_enabled:  cgv,
-      lotte_enabled: lotte,
-      megabox_enabled: megabox,
-      updated_at: new Date().toISOString(),
+      event_labels:     evLabels,
+      cgv_enabled:      cgv,
+      lotte_enabled:    lotte,
+      megabox_enabled:  megabox,
+      check_days_ahead: daysAhead,
+      updated_at:       new Date().toISOString(),
     }).eq('user_id', uid)
     setSaveMsg(error ? '저장 실패: ' + error.message : '✅ 설정이 저장되었습니다.')
     setSaving(false)
@@ -260,6 +263,32 @@ export default function Settings({ session }) {
             placeholder="이벤트명 입력 (비우면 이벤트 미감시)"
           />
           <div className="form-hint">무대인사, GV, 시사회 등 — 비워두면 일반 상영만 감시</div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">
+            며칠 앞까지 감시할지 &nbsp;
+            <span style={{ color: 'var(--primary)', fontWeight: 700 }}>
+              {daysAhead === 0 ? '오늘만' : `오늘 포함 ${daysAhead + 1}일 (${daysAhead}일 후까지)`}
+            </span>
+          </label>
+          <input
+            type="range"
+            min={0} max={14} step={1}
+            value={daysAhead}
+            onChange={e => setDaysAhead(Number(e.target.value))}
+            style={{ padding: 0, cursor: 'pointer', accentColor: 'var(--primary)' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            <span>오늘만</span>
+            <span>3일</span>
+            <span>7일</span>
+            <span>14일</span>
+          </div>
+          <div className="form-hint">
+            지점 설정 시에만 적용됩니다. 날짜가 늘어날수록 체크 시간이 길어집니다.
+            무대인사는 3~7일 권장.
+          </div>
         </div>
       </div>
 

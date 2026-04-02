@@ -39,7 +39,7 @@ class LotteChecker(BaseChecker):
             "Referer": "https://www.lottecinema.co.kr/NLCJHS/Movie/MovieList",
         }
 
-    def get_bookable_movies(self, branches: List[str] = None) -> List[MovieInfo]:
+    def get_bookable_movies(self, branches: List[str] = None, days_ahead: int = 0) -> List[MovieInfo]:
         if branches:
             return self._fetch_by_branches(branches)
         return self._fetch_all()

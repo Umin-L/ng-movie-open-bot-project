@@ -7,6 +7,7 @@ CGV 예매 가능 영화 체커 (Playwright 기반)
 """
 
 import re
+from datetime import datetime, timedelta
 from typing import List
 
 from .base import BaseChecker, MovieInfo
@@ -18,7 +19,7 @@ CGV_DETAIL_BASE = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
 
 
 class CGVChecker(BaseChecker):
-    def get_bookable_movies(self, branches: List[str] = None) -> List[MovieInfo]:
+    def get_bookable_movies(self, branches: List[str] = None, days_ahead: int = 0) -> List[MovieInfo]:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -26,7 +27,7 @@ class CGVChecker(BaseChecker):
             return []
 
         if branches:
-            return self._fetch_by_branches(branches, sync_playwright)
+            return self._fetch_by_branches(branches, sync_playwright, days_ahead)
         return self._fetch_all(sync_playwright)
 
     # ── 지점 지정 없음: 전국 예매 가능 목록 ──────────────────────────
@@ -46,8 +47,8 @@ class CGVChecker(BaseChecker):
             print(f"[CGV] 전체 조회 오류: {e}")
             return []
 
-    # ── 지점 지정: 지점별 상영 스케줄 조회 ──────────────────────────
-    def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright) -> List[MovieInfo]:
+    # ── 지점 지정: 지점별 상영 스케줄 조회 (N일치) ──────────────────
+    def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright, days_ahead: int = 0) -> List[MovieInfo]:
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
@@ -67,27 +68,36 @@ class CGVChecker(BaseChecker):
                     browser.close()
                     return []
 
-                # 2. 지점별 상영 스케줄 조회
-                from datetime import datetime
-                today = datetime.now().strftime("%Y%m%d")
+                # 2. 날짜 목록 생성 (오늘 ~ days_ahead 일 후)
+                dates = [
+                    (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
+                    for d in range(days_ahead + 1)
+                ]
+
                 movies = []
                 seen = set()
 
                 for theater in theaters:
-                    url = (
-                        f"{CGV_SCHEDULE_URL}"
-                        f"?areacode={theater['area']}"
-                        f"&theatercode={theater['code']}"
-                        f"&date={today}"
-                    )
-                    page.goto(url, wait_until="networkidle", timeout=20000)
-                    schedule_html = page.content()
-                    branch_movies = self._parse_schedule_page(schedule_html, theater["name"])
-                    for m in branch_movies:
-                        key = (m.title, m.branch, m.event_label)
-                        if key not in seen:
-                            seen.add(key)
-                            movies.append(m)
+                    for date_str in dates:
+                        url = (
+                            f"{CGV_SCHEDULE_URL}"
+                            f"?areacode={theater['area']}"
+                            f"&theatercode={theater['code']}"
+                            f"&date={date_str}"
+                        )
+                        try:
+                            page.goto(url, wait_until="networkidle", timeout=20000)
+                            schedule_html = page.content()
+                            branch_movies = self._parse_schedule_page(
+                                schedule_html, theater["name"], date_str
+                            )
+                            for m in branch_movies:
+                                key = (m.title, m.branch, m.event_label, m.extra)
+                                if key not in seen:
+                                    seen.add(key)
+                                    movies.append(m)
+                        except Exception as e:
+                            print(f"[CGV] {theater['name']} {date_str} 조회 오류: {e}")
 
                 browser.close()
                 return movies
@@ -187,11 +197,13 @@ class CGVChecker(BaseChecker):
                 return kw
         return ""
 
-    def _parse_schedule_page(self, html: str, branch_name: str) -> List[MovieInfo]:
+    def _parse_schedule_page(self, html: str, branch_name: str, date_str: str = "") -> List[MovieInfo]:
         """CGV iframeTheater 상영시간표 페이지에서 영화 목록 파싱."""
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html, "lxml")
         movies = []
+
+        date_display = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}" if date_str else ""
 
         # 상영시간표 구조: .sect-showtimes > ul > li
         for li in soup.select(".sect-showtimes ul li, ul.list-schedule li"):
@@ -213,12 +225,13 @@ class CGVChecker(BaseChecker):
 
             if has_available:
                 event_label = self._detect_event_label(li)
+                extra = "예매가능" + (f" | 📅 {date_display}" if date_display else "")
                 movies.append(MovieInfo(
                     title=title,
                     theater="CGV",
                     booking_url=CGV_MOVIES_URL,
                     branch=branch_name,
-                    extra="예매가능",
+                    extra=extra,
                     event_label=event_label,
                 ))
         return movies

@@ -35,11 +35,15 @@ class BaseChecker(ABC):
     }
 
     @abstractmethod
-    def get_bookable_movies(self, branches: List[str] = None) -> List[MovieInfo]:
+    def get_bookable_movies(
+        self,
+        branches: List[str] = None,
+        days_ahead: int = 0,
+    ) -> List[MovieInfo]:
         """
         현재 예매 가능한 영화 목록을 반환한다.
-        branches 가 주어지면 해당 지점 키워드를 포함하는 지점만 반환한다.
-        branches 가 비어있으면 전체 반환.
+        branches   : 지점 키워드 목록 (없으면 전국)
+        days_ahead : 오늘 포함 며칠 앞까지 조회할지 (0 = 오늘만)
         """
         ...
 
