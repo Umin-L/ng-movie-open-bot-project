@@ -23,6 +23,9 @@ export default function Dashboard({ session }) {
   const [profile,    setProfile]    = useState(null)
   const [config,     setConfig]     = useState(null)
   const [loading,    setLoading]    = useState(true)
+  const [resetting,  setResetting]  = useState(false)
+  const [resetMsg,   setResetMsg]   = useState('')
+  const [showConfirm, setShowConfirm] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -48,6 +51,23 @@ export default function Dashboard({ session }) {
     setLoading(false)
   }
 
+  async function resetState() {
+    setResetting(true)
+    setResetMsg('')
+    setShowConfirm(false)
+    const { error } = await supabase
+      .from('movie_states')
+      .delete()
+      .eq('user_id', session.user.id)
+    if (error) {
+      setResetMsg('❌ 초기화 실패: ' + error.message)
+    } else {
+      setResetMsg('✅ 상태 초기화 완료! 다음 체크(최대 5분) 때 현재 열린 예매가 모두 알림으로 옵니다.')
+    }
+    setResetting(false)
+    setTimeout(() => setResetMsg(''), 8000)
+  }
+
   const isTelegramSet = profile?.telegram_chat_id?.trim()
   const watchedMovies = config?.movies?.length ? config.movies.join(', ') : '전체'
   const watchedBranch = config?.branches?.length ? config.branches.join(', ') : '전국'
@@ -62,7 +82,55 @@ export default function Dashboard({ session }) {
 
   return (
     <div>
-      <h2 style={{ fontSize: 22, fontWeight: 800, marginBottom: 20 }}>대시보드</h2>
+      {/* 확인 모달 */}
+      {showConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200
+        }}>
+          <div style={{
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 14, padding: 32, maxWidth: 360, width: '90%',
+            boxShadow: 'var(--shadow)'
+          }}>
+            <div style={{ fontSize: 32, marginBottom: 12, textAlign: 'center' }}>🔄</div>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 8, textAlign: 'center' }}>
+              상태 초기화
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24, textAlign: 'center', lineHeight: 1.6 }}>
+              현재 감지된 상태가 모두 지워집니다.<br />
+              다음 체크 때 <strong>현재 열려있는 모든 예매</strong>를<br />
+              새것으로 인식해 텔레그램 알림을 보냅니다.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn-ghost" style={{ flex: 1 }}
+                onClick={() => setShowConfirm(false)}>취소</button>
+              <button className="btn-primary" style={{ flex: 1 }}
+                onClick={resetState}>초기화</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 800 }}>대시보드</h2>
+        <button
+          className="btn-ghost"
+          style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
+          onClick={() => setShowConfirm(true)}
+          disabled={resetting}
+          title="상태를 초기화하면 현재 열린 예매가 다음 체크 때 모두 알림으로 옵니다"
+        >
+          {resetting ? <span className="spinner" /> : '🔄'} 상태 초기화
+        </button>
+      </div>
+
+      {resetMsg && (
+        <div className={'alert ' + (resetMsg.startsWith('✅') ? 'alert-success' : 'alert-error')}
+          style={{ marginBottom: 16 }}>
+          {resetMsg}
+        </div>
+      )}
 
       {/* 텔레그램 미설정 경고 */}
       {!isTelegramSet && (
