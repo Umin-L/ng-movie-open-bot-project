@@ -5,6 +5,7 @@
 지점 지정:  schedulePage.do  → 해당 지점의 실제 상영 스케줄 기반
 """
 
+import html
 import json
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -61,7 +62,7 @@ class MegaboxChecker(BaseChecker):
             title = (item.get("rpstMovieNm") or item.get("movieNm", "")).strip()
             if not title:
                 continue
-            brch_nm = item.get("brchNm", "")
+            brch_nm = html.unescape(item.get("brchNm", "") or "")
             play_date = item.get("_play_date", "")
             play_start_time = item.get("playStartTime", "")
             event_label = (item.get("eventDivCdNm") or "").strip()
@@ -134,7 +135,7 @@ class MegaboxChecker(BaseChecker):
         seen = set()
 
         for item in all_schedules:
-            brch_nm = item.get("brchNm", "")
+            brch_nm = html.unescape(item.get("brchNm", "") or "")
             if not self.match_branch(brch_nm, branch_keywords):
                 continue
 
