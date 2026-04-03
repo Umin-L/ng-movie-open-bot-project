@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'YourMovieAlertBot'
-const DEFAULT_EVENT_LABELS = ['무대인사', 'GV', '시사회']
+const DEFAULT_EVENT_LABELS = ['무대인사', 'GV', '시사회', '시네마톡']
 
 /* ── 태그 입력 컴포넌트 ── */
 function TagInput({ value = [], onChange, placeholder }) {
@@ -52,6 +53,7 @@ function Toggle({ id, checked, onChange }) {
 
 export default function Settings({ session }) {
   const uid = session.user.id
+  const navigate = useNavigate()
 
   // 설정 상태
   const [movies,    setMovies]   = useState([])
@@ -65,8 +67,6 @@ export default function Settings({ session }) {
   // 텔레그램
   const [chatId,    setChatId]   = useState('')
   const [tgInput,   setTgInput]  = useState('')
-  const [tgUsername, setTgUsername] = useState('')
-  const [tgLoading, setTgLoading] = useState(false)
   const [tgMsg,     setTgMsg]    = useState('')
 
   // 저장
@@ -98,25 +98,6 @@ export default function Settings({ session }) {
     setLoading(false)
   }
 
-  /* 텔레그램 chat_id 자동 조회 (Vercel API 경유) */
-  async function fetchChatId() {
-    if (!tgUsername.trim()) { setTgMsg('텔레그램 사용자명을 입력해주세요.'); return }
-    setTgLoading(true); setTgMsg('')
-    try {
-      const res  = await fetch(`/api/telegram/get-chat-id?username=${encodeURIComponent(tgUsername.trim().replace('@',''))}`)
-      const data = await res.json()
-      if (data.chat_id) {
-        setTgInput(String(data.chat_id))
-        setTgMsg(`✅ Chat ID 찾음: ${data.chat_id}`)
-      } else {
-        setTgMsg('❌ 찾을 수 없음. 봇에게 /start 를 먼저 보냈는지 확인하세요.')
-      }
-    } catch {
-      setTgMsg('❌ 조회 실패. 잠시 후 다시 시도해주세요.')
-    }
-    setTgLoading(false)
-  }
-
   /* 텔레그램 연결 저장 */
   async function saveTelegram() {
     setSaving(true)
@@ -142,9 +123,14 @@ export default function Settings({ session }) {
       check_days_ahead: daysAhead,
       updated_at:       new Date().toISOString(),
     }).eq('user_id', uid)
-    setSaveMsg(error ? '저장 실패: ' + error.message : '✅ 설정이 저장되었습니다.')
-    setSaving(false)
-    setTimeout(() => setSaveMsg(''), 3000)
+    if (error) {
+      setSaveMsg('저장 실패: ' + error.message)
+      setSaving(false)
+      setTimeout(() => setSaveMsg(''), 3000)
+    } else {
+      setSaving(false)
+      navigate('/')
+    }
   }
 
   if (loading) {
@@ -181,30 +167,9 @@ export default function Settings({ session }) {
           <ol>
             <li>텔레그램에서 <strong>@{BOT_USERNAME}</strong> 검색</li>
             <li>봇에게 <strong>/start</strong> 메시지 전송</li>
-            <li>아래에 텔레그램 사용자명 입력 후 <strong>Chat ID 자동 조회</strong> 클릭</li>
-            <li>조회된 Chat ID 확인 후 <strong>저장</strong></li>
+            <li>텔레그램 <strong>@userinfobot</strong> 에서 본인 Chat ID 확인</li>
+            <li>아래에 Chat ID 입력 후 <strong>저장</strong></li>
           </ol>
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">텔레그램 사용자명 (@ 없이)</label>
-          <div className="form-row">
-            <input
-              type="text"
-              value={tgUsername}
-              onChange={e => setTgUsername(e.target.value)}
-              placeholder="예: honggildong"
-            />
-            <button
-              className="btn-ghost"
-              style={{ whiteSpace:'nowrap', minWidth: 140 }}
-              onClick={fetchChatId}
-              disabled={tgLoading}
-            >
-              {tgLoading ? <span className="spinner" /> : 'Chat ID 자동 조회'}
-            </button>
-          </div>
-          {tgMsg && <div className={`form-${tgMsg.startsWith('✅') ? 'hint' : 'error'}`} style={{ marginTop: 6 }}>{tgMsg}</div>}
         </div>
 
         <div className="form-group">
