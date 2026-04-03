@@ -175,7 +175,7 @@ class CGVChecker(BaseChecker):
         return theaters
 
     # ── 이벤트 라벨 감지 ─────────────────────────────────────────────
-    _EVENT_KEYWORDS = ["무대인사", "GV", "시사회", "무대 인사", "무대Q&A"]
+    _EVENT_KEYWORDS = ["무대인사", "GV", "시사회", "무대 인사", "무대Q&A", "시네마톡"]
 
     def _detect_event_label(self, container) -> str:
         """컨테이너 HTML에서 이벤트 라벨(무대인사/GV/시사회)을 감지한다."""

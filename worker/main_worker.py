@@ -101,21 +101,9 @@ def sb_delete(table: str, params: dict) -> None:
     resp.raise_for_status()
 
 
-# ── 텔레그램 알림 ───────────────────────────────────────────
-def send_telegram(chat_id: str, movies: list) -> bool:
-    lines = ["🎬 *영화 예매 오픈 알림!*\n"]
-    for m in movies:
-        branch_str = f" ({m.branch})" if m.branch else ""
-        event_str  = f" 🎤 *{m.event_label}*" if m.event_label else ""
-        lines.append(f"*{m.theater}{branch_str}* — {m.title}{event_str}")
-        if m.extra:
-            lines.append(f"  _{m.extra}_")
-        if m.booking_url:
-            lines.append(f"  [예매하기]({m.booking_url})")
-        lines.append("")
-
-    text = "\n".join(lines).strip()
-    url  = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+# ── 텔레그램 단일 메시지 발송 ────────────────────────────────
+def _send_telegram_message(chat_id: str, text: str) -> bool:
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         resp = requests.post(url, json={
             "chat_id":                  chat_id,
@@ -131,6 +119,40 @@ def send_telegram(chat_id: str, movies: list) -> bool:
     except Exception as e:
         print(f"  [텔레그램] 오류: {e}")
         return False
+
+
+# ── 텔레그램 알림 (날짜별 메시지 분리) ──────────────────────
+def send_telegram(chat_id: str, movies: list) -> bool:
+    # play_date 기준으로 그룹핑 (없으면 "" 키로)
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for m in movies:
+        groups[m.play_date].append(m)
+
+    success = True
+    for date_key in sorted(groups.keys()):
+        group = groups[date_key]
+        if date_key:
+            date_display = f"{date_key[:4]}-{date_key[4:6]}-{date_key[6:]}"
+            lines = [f"🎬 *영화 예매 오픈 알림! ({date_display})*\n"]
+        else:
+            lines = ["🎬 *영화 예매 오픈 알림!*\n"]
+
+        for m in group:
+            branch_str = f" ({m.branch})" if m.branch else ""
+            event_str  = f" 🎤 *{m.event_label}*" if m.event_label else ""
+            lines.append(f"*{m.theater}{branch_str}* — {m.title}{event_str}")
+            if m.extra:
+                lines.append(f"  _{m.extra}_")
+            if m.booking_url:
+                lines.append(f"  👉 [예매하기]({m.booking_url})")
+            lines.append("")
+
+        text = "\n".join(lines).strip()
+        if not _send_telegram_message(chat_id, text):
+            success = False
+
+    return success
 
 
 # ── 사용자별 영화 체크 ──────────────────────────────────────
@@ -155,12 +177,19 @@ def check_for_user(cfg: dict) -> list:
             movies   = checker.get_bookable_movies(branches=branches, days_ahead=days_ahead)
             filtered = checker.filter_by_keywords(movies, keywords)
 
-            # 이벤트 필터
+            # 이벤트 필터 (시네마톡은 CGV 한정)
+            CGV_ONLY_LABELS = {"시네마톡"}
             if ev_labels:
                 filtered = [
                     m for m in filtered
                     if not m.event_label
-                    or any(el.lower() in m.event_label.lower() for el in ev_labels)
+                    or (
+                        any(el.lower() in m.event_label.lower() for el in ev_labels)
+                        and not (
+                            any(lbl in m.event_label for lbl in CGV_ONLY_LABELS)
+                            and m.theater != "CGV"
+                        )
+                    )
                 ]
             else:
                 filtered = [m for m in filtered if not m.event_label]
