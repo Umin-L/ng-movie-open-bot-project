@@ -148,22 +148,26 @@ class MegaboxChecker(BaseChecker):
                 event_label = f"{event_label}({event_progrs})"
 
             play_date = item.get("_play_date", "")
-            # 날짜까지 dedup key에 포함 — 같은 영화라도 날짜별로 알림
-            key = (title, brch_nm, event_label, play_date)
+            play_start_time = item.get("playStartTime", "")
+            # 날짜+시간까지 dedup key에 포함 — 같은 영화라도 회차별로 알림
+            key = (title, brch_nm, event_label, play_date, play_start_time)
             if key in seen:
                 continue
             seen.add(key)
 
             movie_no = item.get("movieNo", "")
-            stat_nm = item.get("movieStatCdNm", "")
-            booking_url = (
-                f"{MEGABOX_DETAIL_BASE}?movieNo={movie_no}"
-                if movie_no
-                else "https://www.megabox.co.kr/booking"
-            )
+            brch_no = item.get("brchNo", "")
+            # 직접 예매 페이지 URL
+            if brch_no and play_date and movie_no:
+                booking_url = (
+                    f"https://www.megabox.co.kr/booking/timetable"
+                    f"?brchNo={brch_no}&playDe={play_date}&movieNo={movie_no}"
+                )
+            else:
+                booking_url = "https://www.megabox.co.kr/booking"
             # 날짜 포맷 변환 (20260410 → 2026-04-10)
             date_display = f"{play_date[:4]}-{play_date[4:6]}-{play_date[6:]}" if play_date else ""
-            extra = f"예매가능 | {stat_nm}" + (f" | 📅 {date_display}" if date_display else "")
+            extra = (f"📅 {date_display}" if date_display else "") + (f" {play_start_time}" if play_start_time else "")
             movies.append(
                 MovieInfo(
                     title=title,
@@ -172,6 +176,7 @@ class MegaboxChecker(BaseChecker):
                     branch=brch_nm,
                     extra=extra,
                     event_label=event_label,
+                    play_date=play_date,
                 )
             )
 

@@ -9,8 +9,9 @@ class MovieInfo:
     theater: str          # CGV / 롯데시네마 / 메가박스
     booking_url: str
     branch: str = ""      # 지점명 (예: 코엑스, 강남)
-    extra: str = ""       # 추가 정보 (개봉일, 상영 타입 등)
+    extra: str = ""       # 추가 정보 (상영 타입 등)
     event_label: str = "" # 이벤트 라벨 (예: 무대인사, GV, 시사회)
+    play_date: str = ""   # 상영 날짜 (YYYYMMDD)
 
     def __eq__(self, other):
         return (
