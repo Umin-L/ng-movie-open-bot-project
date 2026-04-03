@@ -269,19 +269,20 @@ export default function Settings({ session }) {
           </label>
           <input
             type="range"
-            min={3} max={60} step={1}
+            min={1} max={60} step={1}
             value={checkInterval}
             onChange={e => setCheckInterval(Number(e.target.value))}
             style={{ padding: 0, cursor: 'pointer', accentColor: 'var(--primary)' }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            <span>3분</span>
+            <span>1분</span>
             <span>10분</span>
             <span>30분</span>
             <span>60분</span>
           </div>
           <div className="form-hint">
-            CGV 포함 시 최소 5분 권장. 짧을수록 빠르게 감지하지만 서버 부하가 증가합니다.
+            짧을수록 빠르게 감지하지만 서버 부하가 증가합니다.<br />
+            🔴 CGV 활성화 시 Playwright 크롤링으로 인해 최소 3분 이상을 권장합니다.
           </div>
         </div>
       </div>
