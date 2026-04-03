@@ -64,8 +64,8 @@ class MegaboxChecker(BaseChecker):
             brch_nm = item.get("brchNm", "")
             play_date = item.get("_play_date", "")
             play_start_time = item.get("playStartTime", "")
-            event_label = item.get("eventDivCdNm", "").strip()
-            event_progrs = item.get("eventProgrs", "").strip()
+            event_label = (item.get("eventDivCdNm") or "").strip()
+            event_progrs = (item.get("eventProgrs") or "").strip()
             if event_label and event_progrs:
                 event_label = f"{event_label}({event_progrs})"
             key = (title, brch_nm, event_label, play_date, play_start_time)
@@ -148,8 +148,8 @@ class MegaboxChecker(BaseChecker):
                 continue
 
             # 이벤트 라벨 추출 (무대인사, GV, 시사회 등)
-            event_label = item.get("eventDivCdNm", "").strip()
-            event_progrs = item.get("eventProgrs", "").strip()
+            event_label = (item.get("eventDivCdNm") or "").strip()
+            event_progrs = (item.get("eventProgrs") or "").strip()
             if event_label and event_progrs:
                 event_label = f"{event_label}({event_progrs})"
 
