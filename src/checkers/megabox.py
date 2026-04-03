@@ -81,7 +81,7 @@ class MegaboxChecker(BaseChecker):
                         theater="메가박스",
                         booking_url=booking_url,
                         branch="",
-                        extra=f"예매가능 | {stat_nm} | 개봉: {rel_date}",
+                        extra="예매가능",
                     )
                 )
 
