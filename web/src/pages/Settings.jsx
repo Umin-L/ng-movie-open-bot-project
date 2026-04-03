@@ -63,7 +63,8 @@ export default function Settings({ session }) {
   const [cgv,       setCgv]      = useState(true)
   const [lotte,     setLotte]    = useState(true)
   const [megabox,   setMegabox]  = useState(true)
-  const [daysAhead, setDaysAhead] = useState(0)
+  const [daysAhead,     setDaysAhead]    = useState(0)
+  const [checkInterval, setCheckInterval] = useState(5)
 
   // 텔레그램
   const [chatId,    setChatId]   = useState('')
@@ -91,6 +92,7 @@ export default function Settings({ session }) {
       setLotte(cfg.lotte_enabled ?? true)
       setMegabox(cfg.megabox_enabled ?? true)
       setDaysAhead(cfg.check_days_ahead ?? 0)
+      setCheckInterval(cfg.check_interval_minutes ?? 5)
     }
     if (prof?.telegram_chat_id) {
       setChatId(prof.telegram_chat_id)
@@ -122,6 +124,7 @@ export default function Settings({ session }) {
       lotte_enabled:           lotte,
       megabox_enabled:         megabox,
       check_days_ahead:        daysAhead,
+      check_interval_minutes:  checkInterval,
       updated_at:              new Date().toISOString(),
     }).eq('user_id', uid)
     if (error) {
@@ -254,6 +257,32 @@ export default function Settings({ session }) {
           <div className="form-hint">
             지점 설정 시에만 적용됩니다. 날짜가 늘어날수록 체크 시간이 길어집니다.
             무대인사는 3~7일 권장.
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">
+            감지 주기 &nbsp;
+            <span style={{ color: 'var(--primary)', fontWeight: 700 }}>
+              {checkInterval}분마다
+            </span>
+          </label>
+          <input
+            type="range"
+            min={1} max={60} step={1}
+            value={checkInterval}
+            onChange={e => setCheckInterval(Number(e.target.value))}
+            style={{ padding: 0, cursor: 'pointer', accentColor: 'var(--primary)' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            <span>1분</span>
+            <span>10분</span>
+            <span>30분</span>
+            <span>60분</span>
+          </div>
+          <div className="form-hint">
+            짧을수록 빠르게 감지하지만 서버 부하가 증가합니다.<br />
+            🔴 CGV 활성화 시 Playwright 크롤링으로 인해 최소 3분 이상을 권장합니다.
           </div>
         </div>
 
