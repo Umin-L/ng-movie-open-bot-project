@@ -9,9 +9,8 @@
 pipeline {
     agent any
 
-    // 1분마다 실행
     triggers {
-        cron('* * * * *')
+        cron('H/3 4-7 * * *')
     }
 
     environment {
