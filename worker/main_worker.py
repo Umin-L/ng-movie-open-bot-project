@@ -224,6 +224,13 @@ def sync_state(user_id: str, current: list) -> None:
     """현재 목록으로 DB 상태를 전체 교체한다."""
     sb_delete("movie_states", {"user_id": f"eq.{user_id}"})
     if current:
+        seen: set = set()
+        deduped: list = []
+        for m in current:
+            key = (m.title, m.theater, m.branch, m.event_label, m.play_date)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(m)
         sb_post("movie_states", [
             {
                 "user_id":     user_id,
@@ -234,7 +241,7 @@ def sync_state(user_id: str, current: list) -> None:
                 "play_date":   m.play_date,
                 "detected_at": datetime.now(timezone.utc).isoformat(),
             }
-            for m in current
+            for m in deduped
         ])
 
 
