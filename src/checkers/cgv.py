@@ -225,13 +225,13 @@ class CGVChecker(BaseChecker):
 
             if has_available:
                 event_label = self._detect_event_label(li)
-                extra = "예매가능" + (f" | 📅 {date_display}" if date_display else "")
                 movies.append(MovieInfo(
                     title=title,
                     theater="CGV",
                     booking_url=CGV_MOVIES_URL,
                     branch=branch_name,
-                    extra=extra,
+                    extra="예매가능",
                     event_label=event_label,
+                    play_date=date_str,
                 ))
         return movies

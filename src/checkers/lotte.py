@@ -152,6 +152,6 @@ class LotteChecker(BaseChecker):
             theater="롯데시네마",
             booking_url=booking_url,
             branch=branch,
-            extra=f"예매가능 | {label} | 개봉: {rel_date}",
+            extra=f"예매가능 | {label}",
             event_label=event_label,
         )
