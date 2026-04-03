@@ -182,13 +182,11 @@ def check_for_user(cfg: dict) -> list:
             if ev_labels:
                 filtered = [
                     m for m in filtered
-                    if not m.event_label
-                    or (
-                        any(el.lower() in m.event_label.lower() for el in ev_labels)
-                        and not (
-                            any(lbl in m.event_label for lbl in CGV_ONLY_LABELS)
-                            and m.theater != "CGV"
-                        )
+                    if m.event_label
+                    and any(el.lower() in m.event_label.lower() for el in ev_labels)
+                    and not (
+                        any(lbl in m.event_label for lbl in CGV_ONLY_LABELS)
+                        and m.theater != "CGV"
                     )
                 ]
             else:
