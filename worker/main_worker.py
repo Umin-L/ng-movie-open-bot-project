@@ -207,13 +207,16 @@ def check_for_user(cfg: dict) -> list:
 def detect_new(user_id: str, current: list) -> list:
     rows = sb_get("movie_states", {
         "user_id": f"eq.{user_id}",
-        "select":  "title,theater,branch,event_label",
+        "select":  "title,theater,branch,event_label,play_date",
     })
-    prev_keys = {(r["title"], r["theater"], r["branch"], r["event_label"]) for r in rows}
+    prev_keys = {
+        (r["title"], r["theater"], r["branch"], r["event_label"], r.get("play_date", ""))
+        for r in rows
+    }
 
     return [
         m for m in current
-        if (m.title, m.theater, m.branch, m.event_label) not in prev_keys
+        if (m.title, m.theater, m.branch, m.event_label, m.play_date) not in prev_keys
     ]
 
 
@@ -228,6 +231,7 @@ def sync_state(user_id: str, current: list) -> None:
                 "theater":     m.theater,
                 "branch":      m.branch,
                 "event_label": m.event_label,
+                "play_date":   m.play_date,
                 "detected_at": datetime.now(timezone.utc).isoformat(),
             }
             for m in current
