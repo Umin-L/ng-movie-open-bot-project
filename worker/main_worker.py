@@ -138,10 +138,12 @@ def send_telegram(chat_id: str, movies: list) -> bool:
         else:
             lines = ["🎬 *영화 예매 오픈 알림!*\n"]
 
+        THEATER_ICON = {"CGV": "⚫️", "롯데시네마": "🔴", "메가박스": "🟣"}
         for m in group:
+            icon       = THEATER_ICON.get(m.theater, "🎬")
             branch_str = f" ({m.branch})" if m.branch else ""
             event_str  = f" 🎤 *{m.event_label}*" if m.event_label else ""
-            lines.append(f"*{m.theater}{branch_str}* — {m.title}{event_str}")
+            lines.append(f"{icon} *{m.theater}{branch_str}* — {m.title}{event_str}")
             if m.extra:
                 lines.append(f"  _{m.extra}_")
             if m.booking_url:
