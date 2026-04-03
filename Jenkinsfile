@@ -44,7 +44,7 @@ pipeline {
             steps {
                 dir("${PROJECT_DIR}") {
                     // .env 파일에서 환경변수 로드 후 워커 실행
-                    sh '''
+                    sh '''#!/bin/bash
                         set -a
                         source /opt/moviealert/.env
                         set +a
