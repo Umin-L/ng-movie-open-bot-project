@@ -9,10 +9,6 @@
 pipeline {
     agent any
 
-    triggers {
-        cron('H/3 4-7 * * *')
-    }
-
     environment {
         PROJECT_DIR = '/opt/moviealert'
         PYTHON      = '/opt/moviealert/.venv/bin/python'
