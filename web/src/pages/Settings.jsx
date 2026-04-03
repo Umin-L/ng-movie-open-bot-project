@@ -17,6 +17,7 @@ function TagInput({ value = [], onChange, placeholder }) {
   }
   const remove = (tag) => onChange(value.filter(t => t !== tag))
   const onKey = (e) => {
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() }
     if (e.key === 'Backspace' && !input && value.length) remove(value[value.length - 1])
   }
