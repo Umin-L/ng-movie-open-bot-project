@@ -1,14 +1,12 @@
 """
 롯데시네마 예매 가능 영화 체커
 
-지점 미지정: 전국 모든 지점 GetPlaySequence 병렬 조회 (날짜/시간 포함)
+지점 미지정: GetMoviesToBe (전국) → BookingYN='Y' 필터
 지점 지정:  GetCinemaItems로 지점 ID 조회
            → GetPlaySequence로 날짜별 상영 스케줄 파싱 (날짜/시간 포함)
 """
 
 import json
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import List
 
@@ -57,86 +55,44 @@ class LotteChecker(BaseChecker):
     def get_bookable_movies(self, branches: List[str] = None, days_ahead: int = 0) -> List[MovieInfo]:
         if branches:
             return self._fetch_by_branches(branches, days_ahead)
-        return self._fetch_all(days_ahead)
+        return self._fetch_all()
 
-    # ── 지점 지정 없음: 전국 모든 지점 GetPlaySequence 병렬 조회 ──────
-    def _fetch_all(self, days_ahead: int = 0) -> List[MovieInfo]:
-        cinemas = self._get_cinema_list()
-        if not cinemas:
-            return []
-
-        dates = [
-            (datetime.now() + timedelta(days=d)).strftime("%Y-%m-%d")
-            for d in range(days_ahead + 1)
-        ]
-
-        all_raw: list = []
-        lock = threading.Lock()
-
-        def fetch_one(cinema: dict, date_str: str) -> None:
-            items = self._call_play_sequence(cinema["full_id"], date_str)
-            with lock:
-                for item in items:
-                    item["_cinema"] = cinema
-                    item["_date_str"] = date_str
-                all_raw.extend(items)
-
-        tasks = [(c, d) for c in cinemas for d in dates]
-        with ThreadPoolExecutor(max_workers=25) as executor:
-            futures = [executor.submit(fetch_one, c, d) for c, d in tasks]
-            for f in as_completed(futures):
-                try:
-                    f.result()
-                except Exception:
-                    pass
-
+    # ── 지점 지정 없음: 전국 예매 가능 목록 ──────────────────────────
+    def _fetch_all(self) -> List[MovieInfo]:
         movies: List[MovieInfo] = []
-        seen: set = set()
-
-        for item in all_raw:
-            if item.get("IsBookingYN") != "Y":
-                continue
-            cinema    = item["_cinema"]
-            date_str  = item["_date_str"]
-            title     = item.get("MovieNameKR", "").strip()
-            if not title:
-                continue
-
-            play_dt     = item.get("PlayDt", "")
-            start_time  = item.get("StartTime", "")
-            accompany   = item.get("AccompanyTypeCode", 10)
-            event_label = _ACCOMPANY_LABEL.get(accompany, "")
-            play_date_key = play_dt.replace("-", "") if play_dt else ""
-
-            key = (title, cinema["name"], event_label, play_date_key, start_time)
-            if key in seen:
-                continue
-            seen.add(key)
-
-            movie_code  = item.get("RepresentationMovieCode", "")
-            play_seq    = item.get("PlaySequence", "")
-            booking_url = (
-                f"{LOTTE_BOOKING_BASE}?cinemaID={cinema['full_id']}"
-                f"&playDate={date_str}&movieCode={movie_code}"
-                f"&playSequence={play_seq}"
-                if movie_code else LOTTE_BOOKING_BASE
-            )
-
-            date_display = play_dt if play_dt else ""
-            extra = (f"📅 {date_display}" if date_display else "") + \
-                    (f" {start_time}" if start_time else "")
-
-            movies.append(MovieInfo(
-                title=title,
-                theater="롯데시네마",
-                booking_url=booking_url,
-                branch=cinema["name"],
-                extra=extra,
-                event_label=event_label,
-                play_date=play_date_key,
-            ))
-
+        for play_yn, label in [("Y", "현재상영"), ("N", "개봉예정")]:
+            items = self._call_movie_api(play_yn=play_yn)
+            for item in items:
+                m = self._to_movie_info_simple(item, label)
+                if m:
+                    movies.append(m)
         return movies
+
+    def _to_movie_info_simple(self, item: dict, label: str) -> "MovieInfo | None":
+        title = item.get("MovieNameKR", "").strip()
+        if not title or item.get("BookingYN") != "Y":
+            return None
+        movie_code  = item.get("RepresentationMovieCode", "")
+        booking_url = (
+            f"{LOTTE_BOOKING_BASE}?movieCd={movie_code}&movieName={title}"
+            if movie_code else LOTTE_BOOKING_BASE
+        )
+        event_label = ""
+        if item.get("StageGreetingYN") == "Y":
+            event_label = "무대인사"
+        elif item.get("GalaYN") == "Y" or item.get("GVyn") == "Y":
+            event_label = "GV"
+        elif item.get("PreviewYN") == "Y" or item.get("SpecialScreeningYN") == "Y":
+            event_label = "시사회"
+
+        return MovieInfo(
+            title=title,
+            theater="롯데시네마",
+            booking_url=booking_url,
+            branch="",
+            extra=f"예매가능 | {label}",
+            event_label=event_label,
+        )
 
     # ── 지점 지정: GetPlaySequence 기반 스케줄 조회 (날짜/시간 포함) ──
     def _fetch_by_branches(self, branch_keywords: List[str], days_ahead: int = 0) -> List[MovieInfo]:

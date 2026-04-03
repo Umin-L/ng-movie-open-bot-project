@@ -266,7 +266,7 @@ def main():
         profiles = sb_get("user_profiles", {
             "is_active":        "eq.true",
             "telegram_chat_id": "neq.",
-            "select":           "id,telegram_chat_id,last_checked_at",
+            "select":           "id,telegram_chat_id",
         })
     except Exception as e:
         print(f"[워커] Supabase 연결 실패: {e}")
@@ -276,8 +276,6 @@ def main():
     if not profiles:
         print("[워커] 처리할 사용자 없음. 종료.")
         return
-
-    now_utc = datetime.now(timezone.utc)
 
     # 사용자별 처리
     for profile in profiles:
@@ -289,29 +287,9 @@ def main():
             # 설정 조회
             cfg_rows = sb_get("user_configs", {
                 "user_id": f"eq.{user_id}",
-                "select":  "movies,branches,event_labels,cgv_enabled,lotte_enabled,megabox_enabled,check_days_ahead,check_interval_minutes",
+                "select":  "movies,branches,event_labels,cgv_enabled,lotte_enabled,megabox_enabled,check_days_ahead",
             })
             cfg = cfg_rows[0] if cfg_rows else {}
-
-            # 인터벌 체크 — 마지막 실행 후 설정된 시간이 지나지 않았으면 스킵
-            interval_min   = int(cfg.get("check_interval_minutes") or 5)
-            last_checked   = profile.get("last_checked_at")
-            if last_checked:
-                from datetime import timedelta
-                last_dt = datetime.fromisoformat(last_checked.replace("Z", "+00:00"))
-                elapsed_min = (now_utc - last_dt).total_seconds() / 60
-                if elapsed_min < interval_min:
-                    print(f"    → 스킵 (인터벌 {interval_min}분, 경과 {elapsed_min:.1f}분)")
-                    continue
-
-            # last_checked_at 업데이트
-            requests.patch(
-                f"{SUPABASE_URL}/rest/v1/user_profiles",
-                headers=_HEADERS,
-                params={"id": f"eq.{user_id}"},
-                json={"last_checked_at": now_utc.isoformat()},
-                timeout=10,
-            )
 
             # 영화 체크
             current_movies = check_for_user(cfg)
