@@ -68,9 +68,20 @@ export default function Dashboard({ session }) {
     setTimeout(() => setResetMsg(''), 8000)
   }
 
-  const isTelegramSet = profile?.telegram_chat_id?.trim()
-  const watchedMovies = config?.movies?.length ? config.movies.join(', ') : '전체'
-  const watchedBranch = config?.branches?.length ? config.branches.join(', ') : '전국'
+  const isTelegramSet   = profile?.telegram_chat_id?.trim()
+  const watchedMovies   = config?.movies?.length ? config.movies.join(', ') : '전체'
+  const watchedBranch   = config?.branches?.length ? config.branches.join(', ') : '전국'
+  const checkInterval   = config?.check_interval_minutes ?? 5
+  const daysAhead       = config?.check_days_ahead ?? 0
+
+  // 감지 날짜 범위 계산
+  const watchDates = (() => {
+    const fmt = d => `${d.getMonth() + 1}/${d.getDate()}`
+    const today = new Date()
+    if (daysAhead === 0) return fmt(today)
+    const last = new Date(today); last.setDate(today.getDate() + daysAhead)
+    return `${fmt(today)} ~ ${fmt(last)}`
+  })()
 
   // 통계
   const today       = detections.filter(d => new Date(d.detected_at).toDateString() === new Date().toDateString())
@@ -169,6 +180,14 @@ export default function Dashboard({ session }) {
           <div>
             <span style={{ color:'var(--text-muted)' }}>지점: </span>
             <strong>{watchedBranch}</strong>
+          </div>
+          <div>
+            <span style={{ color:'var(--text-muted)' }}>감지 주기: </span>
+            <strong>{checkInterval}분마다</strong>
+          </div>
+          <div>
+            <span style={{ color:'var(--text-muted)' }}>설정 감지일: </span>
+            <strong>{watchDates}</strong>
           </div>
           <div>
             <span style={{ color:'var(--text-muted)' }}>텔레그램: </span>
