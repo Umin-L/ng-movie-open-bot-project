@@ -22,72 +22,78 @@ class MegaboxChecker(BaseChecker):
     def get_bookable_movies(self, branches: List[str] = None, days_ahead: int = 0) -> List[MovieInfo]:
         if branches:
             return self._fetch_by_branches(branches, days_ahead)
-        return self._fetch_all()
+        return self._fetch_all(days_ahead)
 
-    # ── 지점 지정 없음: 전국 예매 가능 목록 ──────────────────────────
-    def _fetch_all(self) -> List[MovieInfo]:
+    # ── 지점 지정 없음: 전국 스케줄 기반 (날짜/시간 포함) ───────────
+    def _fetch_all(self, days_ahead: int = 0) -> List[MovieInfo]:
         headers = {
             **self.HEADERS,
             "Content-Type": "application/json; charset=UTF-8",
             "X-Requested-With": "XMLHttpRequest",
-            "Referer": "https://www.megabox.co.kr/movie",
+            "Referer": "https://www.megabox.co.kr/booking/timetable",
         }
-        movies: List[MovieInfo] = []
-        page = 1
-
-        while True:
-            payload = {
-                "currentPage": str(page),
-                "recordCountPerPage": "100",
-                "pageType": "list",
-                "ibxMovieNmSearch": "",
-                "onairYn": "",
-                "specialType": "",
-                "specialYn": "N",
-            }
+        dates = [
+            (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
+            for d in range(days_ahead + 1)
+        ]
+        all_schedules = []
+        for date_str in dates:
             try:
                 resp = requests.post(
-                    MEGABOX_MOVIE_LIST_URL,
-                    data=json.dumps(payload),
+                    MEGABOX_SCHEDULE_URL,
+                    data=json.dumps({"masterType": "brch", "playDe": date_str}),
                     headers=headers,
-                    timeout=10,
+                    timeout=15,
                 )
                 resp.raise_for_status()
-                data = resp.json()
+                items = resp.json().get("megaMap", {}).get("movieFormList", [])
+                for item in items:
+                    item["_play_date"] = date_str
+                all_schedules.extend(items)
             except Exception as e:
-                print(f"[메가박스] 전체 조회 실패 (page={page}): {e}")
-                break
+                print(f"[메가박스] 전국 스케줄 조회 실패 ({date_str}): {e}")
 
-            items = data.get("movieList", [])
-            if not items:
-                break
-
-            total = int(items[0].get("totCnt", 0))
-            for item in items:
-                title = item.get("movieNm", "").strip()
-                if not title or item.get("bokdAbleYn") != "Y":
-                    continue
-                movie_no = item.get("movieNo", "")
-                rel_date = item.get("rfilmDe", "")
-                stat_nm = item.get("movieStatNm", "")
+        movies: List[MovieInfo] = []
+        seen = set()
+        for item in all_schedules:
+            if item.get("bokdAbleAt") != "Y":
+                continue
+            title = (item.get("rpstMovieNm") or item.get("movieNm", "")).strip()
+            if not title:
+                continue
+            brch_nm = item.get("brchNm", "")
+            play_date = item.get("_play_date", "")
+            play_start_time = item.get("playStartTime", "")
+            event_label = item.get("eventDivCdNm", "").strip()
+            event_progrs = item.get("eventProgrs", "").strip()
+            if event_label and event_progrs:
+                event_label = f"{event_label}({event_progrs})"
+            key = (title, brch_nm, event_label, play_date, play_start_time)
+            if key in seen:
+                continue
+            seen.add(key)
+            movie_no = item.get("movieNo", "")
+            brch_no = item.get("brchNo", "")
+            if brch_no and play_date and movie_no:
                 booking_url = (
-                    f"{MEGABOX_DETAIL_BASE}?movieNo={movie_no}"
-                    if movie_no
-                    else "https://www.megabox.co.kr/booking"
+                    f"https://www.megabox.co.kr/booking/timetable"
+                    f"?brchNo={brch_no}&playDe={play_date}&movieNo={movie_no}"
                 )
-                movies.append(
-                    MovieInfo(
-                        title=title,
-                        theater="메가박스",
-                        booking_url=booking_url,
-                        branch="",
-                        extra="예매가능",
-                    )
+            else:
+                booking_url = "https://www.megabox.co.kr/booking"
+            date_display = f"{play_date[:4]}-{play_date[4:6]}-{play_date[6:]}" if play_date else ""
+            extra = (f"📅 {date_display}" if date_display else "") + (f" {play_start_time}" if play_start_time else "")
+            movies.append(
+                MovieInfo(
+                    title=title,
+                    theater="메가박스",
+                    booking_url=booking_url,
+                    branch=brch_nm,
+                    extra=extra,
+                    event_label=event_label,
+                    play_date=play_date,
                 )
-
-            if len(movies) >= total or len(items) < 100:
-                break
-            page += 1
+            )
 
         return movies
 
