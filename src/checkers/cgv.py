@@ -143,36 +143,44 @@ class CGVChecker(BaseChecker):
         return movies
 
     def _get_theaters_via_playwright(self, ctx, branch_keywords: List[str]) -> List[dict]:
-        """CGV 지점 페이지 로드 시 네트워크 응답 인터셉트로 지점 목록 수집."""
+        """CGV 메인 방문 후 브라우저 JS 컨텍스트에서 fetch로 지점 목록 조회."""
         page = ctx.new_page()
         theaters = []
-        captured: list = []
-
-        def on_response(response):
-            if "searchRegnList" in response.url:
-                try:
-                    data = response.json()
-                    area_code = str(response.url).split("regnGrpCd=")[-1].split("&")[0] if "regnGrpCd=" in response.url else ""
-                    sites = data.get("data", {}).get("siteList", [])
-                    captured.append((area_code, sites))
-                except Exception:
-                    pass
-
-        page.on("response", on_response)
         try:
-            page.goto(CGV_THEATERS_URL, wait_until="networkidle", timeout=30000)
+            # 메인 방문으로 JS 인터셉터(X-Signature 등) 세팅
+            page.goto("https://www.cgv.co.kr/", wait_until="domcontentloaded", timeout=20000)
+
+            # 브라우저 JS 컨텍스트에서 지역 목록 fetch
+            regions = page.evaluate("""async () => {
+                try {
+                    const r = await fetch('https://api.cgv.co.kr/cnm/site/searchAllRegionAndSite?coCd=A420',
+                        { headers: { 'Accept': 'application/json' } });
+                    const d = await r.json();
+                    return d?.data?.regionInfo || [];
+                } catch(e) { return []; }
+            }""")
+
+            for region in regions:
+                area_code = region.get("comCdval", "")
+                sites = page.evaluate(f"""async () => {{
+                    try {{
+                        const r = await fetch(
+                            'https://api.cgv.co.kr/cnm/atkt/searchRegnList?coCd=A420&regnGrpCd={area_code}',
+                            {{ headers: {{ 'Accept': 'application/json' }} }});
+                        const d = await r.json();
+                        return d?.data?.siteList || [];
+                    }} catch(e) {{ return []; }}
+                }}""")
+                for site in sites:
+                    name = site.get("siteNm", "")
+                    code = site.get("siteNo", "")
+                    if code and self.match_branch(name, branch_keywords):
+                        theaters.append({"name": name, "area": area_code, "code": code})
+
         except Exception as e:
-            print(f"[CGV] 지점 페이지 로드 실패: {e}")
+            print(f"[CGV] 지점 조회 실패: {e}")
         finally:
             page.close()
-
-        for area_code, sites in captured:
-            for site in sites:
-                name = site.get("siteNm", "")
-                code = site.get("siteNo", "")
-                if code and self.match_branch(name, branch_keywords):
-                    theaters.append({"name": name, "area": area_code, "code": code})
-
         return theaters
 
     # ── 이벤트 라벨 감지 ─────────────────────────────────────────────
