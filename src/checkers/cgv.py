@@ -143,37 +143,36 @@ class CGVChecker(BaseChecker):
         return movies
 
     def _get_theaters_via_playwright(self, ctx, branch_keywords: List[str]) -> List[dict]:
-        """Playwright 페이지로 CGV API 호출해 키워드 일치 지점 반환."""
+        """CGV 지점 페이지 로드 시 네트워크 응답 인터셉트로 지점 목록 수집."""
         page = ctx.new_page()
         theaters = []
-        try:
-            # CGV 메인 방문으로 쿠키/세션 획득
-            page.goto("https://www.cgv.co.kr/", wait_until="domcontentloaded", timeout=20000)
+        captured: list = []
 
-            # 지역 목록 조회
-            resp = page.request.get(CGV_REGION_API, timeout=10000)
-            body = resp.body().decode("utf-8").strip()
-            if not body:
-                print("[CGV] 지역 목록 응답 비어있음")
-                return []
-            regions = resp.json().get("data", {}).get("regionInfo", [])
-
-            for region in regions:
-                area_code = region.get("comCdval", "")
+        def on_response(response):
+            if "searchRegnList" in response.url:
                 try:
-                    r = page.request.get(f"{CGV_SITE_API}&regnGrpCd={area_code}", timeout=10000)
-                    sites = r.json().get("data", {}).get("siteList", [])
-                    for site in sites:
-                        name = site.get("siteNm", "")
-                        code = site.get("siteNo", "")
-                        if code and self.match_branch(name, branch_keywords):
-                            theaters.append({"name": name, "area": area_code, "code": code})
-                except Exception as e:
-                    print(f"[CGV] 지역 {area_code} 지점 조회 실패: {e}")
+                    data = response.json()
+                    area_code = str(response.url).split("regnGrpCd=")[-1].split("&")[0] if "regnGrpCd=" in response.url else ""
+                    sites = data.get("data", {}).get("siteList", [])
+                    captured.append((area_code, sites))
+                except Exception:
+                    pass
+
+        page.on("response", on_response)
+        try:
+            page.goto(CGV_THEATERS_URL, wait_until="networkidle", timeout=30000)
         except Exception as e:
-            print(f"[CGV] 지점 API 조회 실패: {e}")
+            print(f"[CGV] 지점 페이지 로드 실패: {e}")
         finally:
             page.close()
+
+        for area_code, sites in captured:
+            for site in sites:
+                name = site.get("siteNm", "")
+                code = site.get("siteNo", "")
+                if code and self.match_branch(name, branch_keywords):
+                    theaters.append({"name": name, "area": area_code, "code": code})
+
         return theaters
 
     # ── 이벤트 라벨 감지 ─────────────────────────────────────────────
