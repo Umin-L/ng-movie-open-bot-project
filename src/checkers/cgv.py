@@ -237,15 +237,15 @@ class CGVChecker(BaseChecker):
             print(f"[CGV] 전체 조회 오류: {e}")
             return []
 
-    # ── 지점 지정: 지점별 상영 스케줄 조회 (requests 기반) ──────────
+    # ── 지점 지정: 영화별 상영 페이지로 지점 매칭 ───────────────────
     def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright, days_ahead: int = 0) -> List[MovieInfo]:
         import requests as req
 
-        theaters = [t for t in _CGV_THEATERS if self.match_branch(t["name"], branch_keywords)]
-        if not theaters:
+        branch_names = {t["name"] for t in _CGV_THEATERS if self.match_branch(t["name"], branch_keywords)}
+        if not branch_names:
             print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
             return []
-        print(f"[CGV] 매칭 지점: {[t['name'] for t in theaters]}")
+        print(f"[CGV] 대상 지점: {sorted(branch_names)}")
 
         dates = [
             (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
@@ -260,29 +260,79 @@ class CGVChecker(BaseChecker):
             "Referer": "https://www.cgv.co.kr/",
         })
 
+        # 1. /movies/ 에서 전체 영화 목록 + 코드 수집 (Playwright, 접근 가능)
+        global_movies = self._fetch_all(sync_playwright)
+        if not global_movies:
+            return []
+
         movies = []
         seen: set = set()
 
-        for theater in theaters:
+        # 2. 영화별 상영 페이지(iframeMovie.aspx)로 지점 확인
+        for gm in global_movies:
+            movie_code = gm.booking_url.replace(CGV_DETAIL_BASE, "").strip()
+            if not movie_code:
+                continue
             for date_str in dates:
                 url = (
-                    f"{CGV_SCHEDULE_URL}"
-                    f"?areacode={theater['area']}"
-                    f"&theatercode={theater['code']}"
-                    f"&date={date_str}"
+                    f"https://www.cgv.co.kr/common/showtimes/iframeMovie.aspx"
+                    f"?movieseq={movie_code}&date={date_str}"
                 )
                 try:
                     resp = session.get(url, timeout=15)
-                    html = resp.text
-                    print(f"[CGV] {theater['name']} {date_str}: status={resp.status_code}, HTML={len(html)}자")
-                    for m in self._parse_schedule_page(html, theater["name"], date_str):
+                    if resp.status_code != 200 or len(resp.text) < 3000:
+                        if date_str == dates[0]:
+                            print(f"[CGV] iframeMovie 접근: status={resp.status_code}, len={len(resp.text)}")
+                        break  # 첫 영화·날짜에서 접근 불가 확인 시 전체 중단
+                    branch_movies = self._parse_movie_schedule(
+                        resp.text, gm.title, gm.event_label, branch_names, date_str
+                    )
+                    for m in branch_movies:
                         key = (m.title, m.branch, m.event_label, m.play_date)
                         if key not in seen:
                             seen.add(key)
                             movies.append(m)
                 except Exception as e:
-                    print(f"[CGV] {theater['name']} {date_str} 조회 오류: {e}")
+                    print(f"[CGV] iframeMovie 오류: {e}")
+                    break
 
+        return movies
+
+    def _parse_movie_schedule(self, html: str, title: str, event_label: str,
+                               branch_names: set, date_str: str) -> List[MovieInfo]:
+        """iframeMovie.aspx: 특정 영화의 전국 상영 목록에서 대상 지점 필터링."""
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "lxml")
+        movies = []
+
+        # 상영관(지점) 목록에서 이름 파싱 후 branch_names 매칭
+        for theater_section in soup.select(".sect-showtimes, .theater-info, [class*='theater']"):
+            name_tag = theater_section.select_one(
+                ".theater-name, .tit-theater, h3, h4, strong, .name"
+            )
+            if not name_tag:
+                continue
+            theater_name = name_tag.get_text(strip=True)
+            # branch_names 중 하나라도 theater_name에 포함되는지 확인
+            if not any(bn in theater_name or theater_name in bn for bn in branch_names):
+                continue
+
+            time_items = theater_section.select("div.info-timetable ul li, .timetable li")
+            has_available = any(
+                "not-sale" not in " ".join(t.get("class", []))
+                for t in time_items
+            ) if time_items else True
+
+            if has_available:
+                movies.append(MovieInfo(
+                    title=title,
+                    theater="CGV",
+                    booking_url=CGV_MOVIES_URL,
+                    branch=theater_name,
+                    extra="예매가능",
+                    event_label=event_label,
+                    play_date=date_str,
+                ))
         return movies
 
     # ── 파싱 ────────────────────────────────────────────────────
