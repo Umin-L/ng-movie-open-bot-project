@@ -286,7 +286,7 @@ class CGVChecker(BaseChecker):
                 )
                 # CGV 메인 페이지 워밍업 (쿠키/세션 확보)
                 page = ctx.new_page()
-                page.goto(CGV_MOVIES_URL, wait_until="networkidle", timeout=30000)
+                page.goto(CGV_MOVIES_URL, wait_until="domcontentloaded", timeout=30000)
 
                 for theater in matched:
                     for date_str in dates:
@@ -295,8 +295,9 @@ class CGVChecker(BaseChecker):
                             f"?TheaterCode={theater['code']}&date={date_str}"
                         )
                         try:
-                            page.goto(url, wait_until="networkidle", timeout=20000)
-                            html = page.content()
+                            # 브라우저 쿠키를 재사용하는 경량 HTTP 요청
+                            resp = ctx.request.get(url, timeout=15000)
+                            html = resp.text()
                             if len(html) < 3000:
                                 print(f"[CGV] {theater['name']} {date_str}: HTML 짧음({len(html)}), 스킵")
                                 continue
