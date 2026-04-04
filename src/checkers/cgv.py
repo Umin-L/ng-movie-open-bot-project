@@ -16,6 +16,7 @@ CGV_MOVIES_URL      = "https://www.cgv.co.kr/movies/"
 CGV_MOBILE_URL      = "https://m.cgv.co.kr/WebApp/MovieV4/MovieList.aspx"
 CGV_SCHEDULE_URL    = "https://www.cgv.co.kr/common/showtimes/"
 CGV_DETAIL_BASE     = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
+CGV_SCN_API         = "https://api.cgv.co.kr/cnm/atkt/searchMovScnInfo"
 
 # ── 전국 CGV 지점 정적 DB (2026-04 기준) ──────────────────────────────────
 # api.cgv.co.kr 가 Oracle Cloud IP에서 차단되므로 정적으로 내장
@@ -258,8 +259,10 @@ class CGVChecker(BaseChecker):
             print(f"[CGV] Playwright 조회 오류: {e}")
             return []
 
-    # ── 지점 지정: Playwright + 프록시로 iframeTheater.aspx 조회 ──────
+    # ── 지점 지정: CGV API 직접 호출 ──────────────────────────────────
     def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright, days_ahead: int = 0) -> List[MovieInfo]:
+        import requests as req
+
         matched = [t for t in _CGV_THEATERS if self.match_branch(t["name"], branch_keywords)]
         if not matched:
             print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
@@ -272,49 +275,87 @@ class CGVChecker(BaseChecker):
         ]
 
         proxy_url = self._get_proxy()
-        pw_proxy = {"server": proxy_url} if proxy_url else None
+        session = req.Session()
+        session.headers.update({
+            "User-Agent": self.HEADERS["User-Agent"],
+            "Accept": "application/json",
+            "Accept-Language": "ko-KR,ko;q=0.9",
+            "Referer": "https://www.cgv.co.kr/",
+        })
+        if proxy_url:
+            session.proxies.update({"http": proxy_url, "https": proxy_url})
 
         movies = []
         seen: set = set()
 
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, proxy=pw_proxy)
-                ctx = browser.new_context(
-                    user_agent=self.HEADERS["User-Agent"],
-                    extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
+        for theater in matched:
+            for date_str in dates:
+                url = (
+                    f"{CGV_SCN_API}"
+                    f"?coCd=A420&siteNo={theater['code']}&scnYmd={date_str}&rtctlScopCd=08"
                 )
-                # CGV 메인 페이지 워밍업 (쿠키/세션 확보)
-                page = ctx.new_page()
-                page.goto(CGV_MOVIES_URL, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    resp = session.get(url, timeout=10)
+                    print(f"[CGV] {theater['name']} {date_str}: status={resp.status_code}")
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json()
+                    # 디버그: 첫 응답 구조 확인
+                    if theater == matched[0] and date_str == dates[0]:
+                        import json as _json
+                        print(f"[CGV] API 응답 샘플: {_json.dumps(data, ensure_ascii=False)[:300]}")
+                    branch_movies = self._parse_scn_api(data, theater["name"], date_str)
+                    for m in branch_movies:
+                        key = (m.title, m.branch, m.event_label, m.play_date)
+                        if key not in seen:
+                            seen.add(key)
+                            movies.append(m)
+                except Exception as e:
+                    print(f"[CGV] {theater['name']} {date_str} 오류: {e}")
 
-                for theater in matched:
-                    for date_str in dates:
-                        url = (
-                            f"{CGV_SCHEDULE_URL}"
-                            f"?TheaterCode={theater['code']}&date={date_str}"
-                        )
-                        try:
-                            page.goto(url, wait_until="networkidle", timeout=20000)
-                            actual_url = page.url
-                            print(f"[CGV] {theater['name']} {date_str}: 이동URL={actual_url}")
-                            html = page.content()
-                            if len(html) < 3000:
-                                print(f"[CGV] {theater['name']} {date_str}: HTML 짧음({len(html)}), 스킵")
-                                continue
-                            branch_movies = self._parse_schedule_page(html, theater["name"], date_str)
-                            for m in branch_movies:
-                                key = (m.title, m.branch, m.event_label, m.play_date)
-                                if key not in seen:
-                                    seen.add(key)
-                                    movies.append(m)
-                        except Exception as e:
-                            print(f"[CGV] {theater['name']} {date_str} 오류: {e}")
+        return movies
 
-                browser.close()
-        except Exception as e:
-            print(f"[CGV] Playwright 브라우저 오류: {e}")
+    def _parse_scn_api(self, data: dict, branch_name: str, date_str: str) -> List[MovieInfo]:
+        """searchMovScnInfo API 응답 파싱."""
+        movies = []
+        # 응답 구조 파악 후 수정 예정 — 일단 최상위 키 출력
+        if not isinstance(data, dict):
+            return []
+        movie_list = (
+            data.get("movieList")
+            or data.get("data", {}).get("movieList")
+            or data.get("result", {}).get("movieList")
+            or []
+        )
+        for item in movie_list:
+            title = (item.get("movieNm") or item.get("movNm") or item.get("title") or "").strip()
+            if not title:
+                continue
+            # 예매 가능 여부: 상영 회차 중 예매 가능한 것이 하나라도 있으면
+            scn_list = item.get("scnList") or item.get("screenList") or []
+            bookable = any(
+                s.get("bkPsblYn") == "Y" or s.get("isBookable") == "Y" or s.get("bookYn") == "Y"
+                for s in scn_list
+            ) if scn_list else True  # 회차 정보 없으면 일단 예매가능으로 간주
 
+            if not bookable:
+                continue
+
+            event_label = ""
+            for kw in self._EVENT_KEYWORDS:
+                if kw in title or kw in str(item):
+                    event_label = kw
+                    break
+
+            movies.append(MovieInfo(
+                title=title,
+                theater="CGV",
+                booking_url=CGV_MOVIES_URL,
+                branch=branch_name,
+                extra="예매가능",
+                event_label=event_label,
+                play_date=date_str,
+            ))
         return movies
 
     def _parse_movie_schedule(self, html: str, title: str, event_label: str,
