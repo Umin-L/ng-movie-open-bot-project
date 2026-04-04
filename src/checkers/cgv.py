@@ -162,87 +162,82 @@ class CGVChecker(BaseChecker):
         page.add_init_script(_INTERCEPT_SCRIPT)
 
         try:
-            # 메인 페이지 먼저 방문해서 세션/쿠키 세팅
-            page.goto("https://www.cgv.co.kr/", wait_until="domcontentloaded", timeout=20000)
-            page.wait_for_timeout(1000)
+            # /theaters/ 는 Oracle VM에서 에러 페이지 반환 → /movies/ 로 세션 확립
+            page.goto(CGV_MOVIES_URL, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(1500)
 
-            # theaters 페이지로 이동
-            page.goto(CGV_THEATERS_URL, wait_until="networkidle", timeout=30000)
-            page.wait_for_timeout(2000)
-
-            # ── 페이지 구조 디버그 ──────────────────────────────────
-            info = page.evaluate("""() => {
-                var html = document.documentElement.innerHTML;
-                return {
-                    url: window.location.href,
-                    title: document.title,
-                    len: html.length,
-                    preview: html.substring(0, 600),
-                    hasTheaterCode: html.indexOf('theatercode') !== -1 || html.indexOf('theaterCode') !== -1,
-                    hasSiteNo: html.indexOf('siteNo') !== -1,
-                    hasAreaCode: html.indexOf('areacode') !== -1 || html.indexOf('areaCode') !== -1,
-                    captureKeys: Object.keys(window.__cgv_captures || {}),
-                    areaTabCount: document.querySelectorAll(
-                        'ul.list-area>li, #ulArea>li, .area-tab li, [class*="area"]>li'
-                    ).length,
-                    cgvGlobals: Object.getOwnPropertyNames(window).filter(function(k){
-                        return /cgv|theater|cinema|area|region|site/i.test(k);
-                    }).slice(0, 15),
+            # ── 영화 페이지 컨텍스트에서 CGV API 직접 호출 ──────────────
+            # (axios 사용 가능하면 axios 인터셉터로 X-Signature 자동 추가)
+            result = page.evaluate("""async () => {
+                var info = {
+                    hasAxios: typeof axios !== 'undefined',
+                    hasFetch: typeof fetch !== 'undefined',
+                    cgvFuncs: Object.getOwnPropertyNames(window).filter(function(k){
+                        return /cgv|api|theater|cinema|site|region/i.test(k);
+                    }).slice(0, 20),
                 };
+
+                var REGION_URL = 'https://api.cgv.co.kr/cnm/site/searchAllRegionAndSite?coCd=A420';
+
+                // 1) axios 시도
+                if (typeof axios !== 'undefined') {
+                    try {
+                        var ar = await axios.get(REGION_URL);
+                        info.axiosStatus = ar.status;
+                        info.regions = ar.data && ar.data.data && ar.data.data.regionInfo;
+                        return info;
+                    } catch(e) {
+                        info.axiosError = e.toString();
+                    }
+                }
+
+                // 2) native fetch 시도
+                try {
+                    var r = await fetch(REGION_URL, { headers: { Accept: 'application/json' } });
+                    info.fetchStatus = r.status;
+                    if (r.ok) {
+                        var d = await r.json();
+                        info.regions = d.data && d.data.regionInfo;
+                    } else {
+                        info.fetchBody = await r.text();
+                    }
+                } catch(e) {
+                    info.fetchError = e.toString();
+                }
+                return info;
             }""")
-            print(f"[CGV] URL: {info.get('url')}")
-            print(f"[CGV] Title: {info.get('title')}")
-            print(f"[CGV] HTML길이={info.get('len')}, theatercode={info.get('hasTheaterCode')}, "
-                  f"siteNo={info.get('hasSiteNo')}, areaCode={info.get('hasAreaCode')}, "
-                  f"캡처={info.get('captureKeys')}, 지역탭={info.get('areaTabCount')}, "
-                  f"CGV전역={info.get('cgvGlobals')}")
-            print(f"[CGV] HTML 미리보기: {info.get('preview', '')[:400]}")
 
-            # ── 지역 탭 클릭 시도 ──────────────────────────────────
-            tab_selectors = [
-                "ul.list-area > li",
-                "#ulArea > li",
-                ".area-tab li",
-                "div.wrap-theater-area li",
-                "[class*='list-area'] li",
-                "a[onclick*='area'], li[onclick*='area']",
-            ]
-            clicked = 0
-            for sel in tab_selectors:
-                els = page.query_selector_all(sel)
-                if els:
-                    print(f"[CGV] 지역 탭 셀렉터 '{sel}': {len(els)}개")
-                    for el in els:
-                        try:
-                            el.click()
-                            page.wait_for_timeout(600)
-                            clicked += 1
-                        except Exception:
-                            pass
-                    break  # 첫 번째로 일치하는 셀렉터만 사용
+            print(f"[CGV] hasAxios={result.get('hasAxios')}, fetchStatus={result.get('fetchStatus')}, "
+                  f"axiosStatus={result.get('axiosStatus')}")
+            print(f"[CGV] fetchError={result.get('fetchError')}, axiosError={result.get('axiosError')}")
+            print(f"[CGV] cgvFuncs={result.get('cgvFuncs')}")
 
-            if clicked:
-                page.wait_for_timeout(1000)
+            regions = result.get("regions") or []
+            print(f"[CGV] 지역 수: {len(regions)}")
 
-            # ── 1순위: 인터셉터 캡처 결과 처리 ──────────────────────
-            captures = page.evaluate("() => window.__cgv_captures || {}")
-            print(f"[CGV] 캡처된 API 수: {len(captures)}")
-            for c_url, data in captures.items():
-                print(f"[CGV]   - {c_url[:80]}")
-                if "searchRegnList" in c_url:
-                    m = re.search(r'regnGrpCd=([^&]+)', c_url)
-                    area_code = m.group(1) if m else ""
-                    for site in (data.get("data", {}).get("siteList", []) or []):
-                        name = site.get("siteNm", "")
-                        code = site.get("siteNo", "")
-                        if code and self.match_branch(name, branch_keywords):
-                            theaters.append({"name": name, "area": area_code, "code": code})
-
-            # ── 2순위: HTML 직접 파싱 ─────────────────────────────
-            if not theaters:
-                print("[CGV] 인터셉터 캡처 없음 → HTML 파싱 시도")
-                html = page.content()
-                theaters = self._parse_theaters_from_html(html, branch_keywords)
+            # 지역별 지점 목록 조회
+            for region in regions:
+                area_code = region.get("comCdval", "")
+                if not area_code:
+                    continue
+                sites_result = page.evaluate(f"""async () => {{
+                    var url = 'https://api.cgv.co.kr/cnm/atkt/searchRegnList?coCd=A420&regnGrpCd={area_code}';
+                    try {{
+                        if (typeof axios !== 'undefined') {{
+                            var r = await axios.get(url);
+                            return r.data && r.data.data && r.data.data.siteList || [];
+                        }}
+                        var r = await fetch(url, {{ headers: {{ Accept: 'application/json' }} }});
+                        if (!r.ok) return [];
+                        var d = await r.json();
+                        return d.data && d.data.siteList || [];
+                    }} catch(e) {{ return []; }}
+                }}""")
+                for site in (sites_result or []):
+                    name = site.get("siteNm", "")
+                    code = site.get("siteNo", "")
+                    if code and self.match_branch(name, branch_keywords):
+                        theaters.append({"name": name, "area": area_code, "code": code})
 
         except Exception as e:
             print(f"[CGV] 지점 조회 실패: {e}")
