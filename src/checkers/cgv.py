@@ -10,8 +10,6 @@ import re
 from datetime import datetime, timedelta
 from typing import List
 
-import requests
-
 from .base import BaseChecker, MovieInfo
 
 CGV_MOVIES_URL    = "https://www.cgv.co.kr/movies/"
@@ -61,8 +59,8 @@ class CGVChecker(BaseChecker):
                     extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
                 )
 
-                # 1. API로 지점 목록 조회
-                theaters = self._get_theaters_from_api(branch_keywords)
+                # 1. Playwright 컨텍스트 안에서 API로 지점 목록 조회
+                theaters = self._get_theaters_via_playwright(ctx, branch_keywords)
                 if not theaters:
                     print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
                     browser.close()
@@ -144,12 +142,10 @@ class CGVChecker(BaseChecker):
                 ))
         return movies
 
-    def _get_theaters_from_api(self, branch_keywords: List[str]) -> List[dict]:
-        """CGV API로 전체 지점 목록을 조회해 키워드 일치 지점 반환."""
-        headers = {**self.HEADERS, "Referer": "https://www.cgv.co.kr/"}
+    def _get_theaters_via_playwright(self, ctx, branch_keywords: List[str]) -> List[dict]:
+        """Playwright 브라우저 컨텍스트로 CGV API 호출해 키워드 일치 지점 반환."""
         try:
-            resp = requests.get(CGV_REGION_API, headers=headers, timeout=10)
-            resp.raise_for_status()
+            resp = ctx.request.get(CGV_REGION_API, timeout=10000)
             regions = resp.json().get("data", {}).get("regionInfo", [])
         except Exception as e:
             print(f"[CGV] 지역 목록 조회 실패: {e}")
@@ -159,12 +155,10 @@ class CGVChecker(BaseChecker):
         for region in regions:
             area_code = region.get("comCdval", "")
             try:
-                resp = requests.get(
+                resp = ctx.request.get(
                     f"{CGV_SITE_API}&regnGrpCd={area_code}",
-                    headers=headers,
-                    timeout=10,
+                    timeout=10000,
                 )
-                resp.raise_for_status()
                 sites = resp.json().get("data", {}).get("siteList", [])
                 for site in sites:
                     name = site.get("siteNm", "")
