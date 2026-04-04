@@ -362,8 +362,25 @@ class CGVChecker(BaseChecker):
     # ── 파싱 ────────────────────────────────────────────────────
     def _parse_movies_page(self, html: str) -> List[MovieInfo]:
         from bs4 import BeautifulSoup
+        from collections import Counter
         soup = BeautifulSoup(html, "lxml")
         movies = []
+
+        # 디버그: 페이지 구조 파악
+        imgs_poster_alt = soup.select("img[alt*='포스터']")
+        imgs_poster_src = soup.select("img[src*='Poster']")
+        imgs_all = soup.select("img[src*='cgv']")
+        print(f"[CGV] img[alt*포스터]={len(imgs_poster_alt)}, img[src*Poster]={len(imgs_poster_src)}, img[src*cgv]={len(imgs_all)}")
+        if imgs_all:
+            s = imgs_all[0]
+            print(f"[CGV] 첫 img src={s.get('src','')[:100]}, alt={s.get('alt','')[:50]}")
+        all_classes = []
+        for el in soup.find_all(True):
+            cls = el.get("class")
+            if cls:
+                all_classes.extend(cls)
+        top15 = [c for c, _ in Counter(all_classes).most_common(15)]
+        print(f"[CGV] 상위클래스: {top15}")
 
         for poster in soup.select("img[alt*='포스터'][src*='Poster']"):
             title = poster.get("alt", "").replace(" 포스터", "").strip()
