@@ -175,7 +175,12 @@ def check_for_user(cfg: dict) -> list:
         name = checker.__class__.__name__
         try:
             movies   = checker.get_bookable_movies(branches=branches, days_ahead=days_ahead)
+            print(f"    [{name}] 전체 조회: {len(movies)}개")
             filtered = checker.filter_by_keywords(movies, keywords)
+            print(f"    [{name}] 키워드 필터 후: {len(filtered)}개")
+            if filtered:
+                labels = list({m.event_label for m in filtered})
+                print(f"    [{name}] 감지된 라벨: {labels}")
 
             # 이벤트 필터 (시네마톡은 CGV 한정)
             CGV_ONLY_LABELS = {"시네마톡"}
@@ -193,7 +198,7 @@ def check_for_user(cfg: dict) -> list:
                 filtered = [m for m in filtered if not m.event_label]
 
             all_movies.extend(filtered)
-            print(f"    [{name}] {len(filtered)}개 매칭")
+            print(f"    [{name}] 라벨 필터 후: {len(filtered)}개 최종 매칭")
         except Exception as e:
             print(f"    [{name}] 오류: {e}")
             traceback.print_exc()
