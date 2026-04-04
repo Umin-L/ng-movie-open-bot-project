@@ -2,7 +2,8 @@
 CGV 예매 가능 영화 체커 (Playwright 기반)
 
 지점 미지정: /movies/ 페이지 렌더링 → 예매하기 버튼 있는 영화 추출
-지점 지정:  /theaters/ 페이지에서 지점 코드 조회
+지점 지정:  /theaters/ 페이지 방문 → 네트워크 인터셉트로 지점 코드 수집
+           → 지역탭 클릭으로 미수집 지역 보완
            → /common/showtimes/iframeTheater.aspx 로 지점별 상영 스케줄 파싱
 """
 
@@ -16,8 +17,6 @@ CGV_MOVIES_URL    = "https://www.cgv.co.kr/movies/"
 CGV_THEATERS_URL  = "https://www.cgv.co.kr/theaters/"
 CGV_SCHEDULE_URL  = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
 CGV_DETAIL_BASE   = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
-CGV_REGION_API    = "https://api.cgv.co.kr/cnm/site/searchAllRegionAndSite?coCd=A420"
-CGV_SITE_API      = "https://api.cgv.co.kr/cnm/atkt/searchRegnList?coCd=A420"
 
 
 class CGVChecker(BaseChecker):
@@ -59,7 +58,7 @@ class CGVChecker(BaseChecker):
                     extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
                 )
 
-                # 1. Playwright 컨텍스트 안에서 API로 지점 목록 조회
+                # 1. 지점 목록 조회 (theaters 페이지 네트워크 인터셉트)
                 theaters = self._get_theaters_via_playwright(ctx, branch_keywords)
                 if not theaters:
                     print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
@@ -75,6 +74,9 @@ class CGVChecker(BaseChecker):
                 movies = []
                 seen = set()
 
+                # 3. 스케줄 조회용 페이지 생성
+                sched_page = ctx.new_page()
+
                 for theater in theaters:
                     for date_str in dates:
                         url = (
@@ -84,8 +86,8 @@ class CGVChecker(BaseChecker):
                             f"&date={date_str}"
                         )
                         try:
-                            page.goto(url, wait_until="networkidle", timeout=20000)
-                            schedule_html = page.content()
+                            sched_page.goto(url, wait_until="networkidle", timeout=20000)
+                            schedule_html = sched_page.content()
                             branch_movies = self._parse_schedule_page(
                                 schedule_html, theater["name"], date_str
                             )
@@ -143,34 +145,78 @@ class CGVChecker(BaseChecker):
         return movies
 
     def _get_theaters_via_playwright(self, ctx, branch_keywords: List[str]) -> List[dict]:
-        """CGV 메인 방문 후 브라우저 JS 컨텍스트에서 fetch로 지점 목록 조회."""
+        """CGV theaters 페이지 네트워크 인터셉트로 지점 코드 수집.
+
+        CGV API는 X-Signature 헤더를 요구하므로, 페이지 자체 JS가 호출하는
+        API 응답을 인터셉트하는 방식을 사용한다.
+        """
         page = ctx.new_page()
         theaters = []
+        regions_data = []
+        sites_by_area: dict = {}
+
+        def on_response(response):
+            try:
+                url = response.url
+                if "searchAllRegionAndSite" in url:
+                    d = response.json()
+                    for r in (d.get("data", {}).get("regionInfo", []) or []):
+                        regions_data.append(r)
+                elif "searchRegnList" in url:
+                    m = re.search(r'regnGrpCd=([^&]+)', url)
+                    area_code = m.group(1) if m else ""
+                    d = response.json()
+                    if area_code:
+                        sites_by_area[area_code] = d.get("data", {}).get("siteList", [])
+            except Exception:
+                pass
+
+        page.on("response", on_response)
+
         try:
-            # 메인 방문으로 JS 인터셉터(X-Signature 등) 세팅
-            page.goto("https://www.cgv.co.kr/", wait_until="domcontentloaded", timeout=20000)
+            # theaters 페이지: 자동으로 searchAllRegionAndSite 호출
+            page.goto(CGV_THEATERS_URL, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(2000)
 
-            # 브라우저 JS 컨텍스트에서 지역 목록 fetch
-            regions = page.evaluate("""async () => {
-                try {
-                    const r = await fetch('https://api.cgv.co.kr/cnm/site/searchAllRegionAndSite?coCd=A420',
-                        { headers: { 'Accept': 'application/json' } });
-                    const d = await r.json();
-                    return d?.data?.regionInfo || [];
-                } catch(e) { return []; }
-            }""")
+            print(f"[CGV] 지역 목록: {len(regions_data)}개, 수집된 지역 데이터: {len(sites_by_area)}개")
 
-            for region in regions:
+            # 인터셉트로 수집 안 된 지역: 탭 클릭으로 보완
+            for region in regions_data:
                 area_code = region.get("comCdval", "")
-                sites = page.evaluate(f"""async () => {{
-                    try {{
-                        const r = await fetch(
-                            'https://api.cgv.co.kr/cnm/atkt/searchRegnList?coCd=A420&regnGrpCd={area_code}',
-                            {{ headers: {{ 'Accept': 'application/json' }} }});
-                        const d = await r.json();
-                        return d?.data?.siteList || [];
-                    }} catch(e) {{ return []; }}
-                }}""")
+                if area_code in sites_by_area:
+                    continue
+                # 여러 셀렉터 시도
+                clicked = False
+                for sel in [
+                    f"[data-areacode='{area_code}']",
+                    f"[data-area='{area_code}']",
+                    f"li[onclick*=\"'{area_code}'\"]",
+                    f"a[href*='areacode={area_code}']",
+                    f"button[value='{area_code}']",
+                ]:
+                    el = page.query_selector(sel)
+                    if el:
+                        el.click()
+                        page.wait_for_timeout(600)
+                        clicked = True
+                        break
+                if not clicked:
+                    # JS evaluate 로 직접 클릭 이벤트 발생
+                    page.evaluate(f"""() => {{
+                        const els = document.querySelectorAll('[class*="area"], [class*="region"], [id*="area"]');
+                        for (const el of els) {{
+                            if (el.textContent.includes('{region.get("comCdNm", "")}')) {{
+                                el.click(); break;
+                            }}
+                        }}
+                    }}""")
+                    page.wait_for_timeout(600)
+
+            page.wait_for_timeout(1000)
+            print(f"[CGV] 탭 클릭 후 지역 데이터: {len(sites_by_area)}개")
+
+            # 지점 매칭
+            for area_code, sites in sites_by_area.items():
                 for site in sites:
                     name = site.get("siteNm", "")
                     code = site.get("siteNo", "")
