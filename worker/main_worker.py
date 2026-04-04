@@ -146,8 +146,6 @@ def send_telegram(chat_id: str, movies: list) -> bool:
             lines.append(f"{icon} *{m.theater}{branch_str}* — {m.title}{event_str}")
             if m.extra:
                 lines.append(f"  _{m.extra}_")
-            if m.booking_url:
-                lines.append(f"  👉 [예매하기]({m.booking_url})")
             lines.append("")
 
         text = "\n".join(lines).strip()
