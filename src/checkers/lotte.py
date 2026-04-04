@@ -133,14 +133,11 @@ class LotteChecker(BaseChecker):
                         continue
                     seen.add(key)
 
-                    movie_code  = item.get("RepresentationMovieCode", "")
-                    cinema_id   = item.get("CinemaID", "")
-                    play_seq    = item.get("PlaySequence", "")
                     booking_url = (
-                        f"{LOTTE_BOOKING_BASE}?cinemaID={cinema['full_id']}"
-                        f"&playDate={date_str}&movieCode={movie_code}"
-                        f"&playSequence={play_seq}"
-                        if movie_code else LOTTE_BOOKING_BASE
+                        f"https://www.lottecinema.co.kr/NLCHS/Cinema/Detail"
+                        f"?divisionCode={cinema['division']}"
+                        f"&detailDivisionCode={cinema['detail_div']}"
+                        f"&cinemaID={cinema['id']}"
                     )
 
                     date_display = play_dt if play_dt else ""
@@ -227,9 +224,11 @@ class LotteChecker(BaseChecker):
             items = data.get("Cinemas", {}).get("Items", [])
             return [
                 {
-                    "id":      str(c["CinemaID"]),
-                    "full_id": f"{c['DivisionCode']}|1|{c['CinemaID']}",
-                    "name":    c["CinemaNameKR"],
+                    "id":           str(c["CinemaID"]),
+                    "full_id":      f"{c['DivisionCode']}|1|{c['CinemaID']}",
+                    "name":         c["CinemaNameKR"],
+                    "division":     str(c.get("DivisionCode", 1)),
+                    "detail_div":   str(c.get("DetailDivisionCode", c.get("DivisionCode", 1))),
                 }
                 for c in items
             ]

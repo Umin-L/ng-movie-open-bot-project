@@ -78,7 +78,7 @@ class MegaboxChecker(BaseChecker):
             if brch_no and play_date and movie_no:
                 booking_url = (
                     f"https://www.megabox.co.kr/booking/timetable"
-                    f"?brchNo={brch_no}&playDe={play_date}&movieNo={movie_no}"
+                    f"?brchNo={brch_no}&playDe={play_date}"
                 )
             else:
                 booking_url = "https://www.megabox.co.kr/booking"
@@ -168,7 +168,7 @@ class MegaboxChecker(BaseChecker):
             if brch_no and play_date and movie_no:
                 booking_url = (
                     f"https://www.megabox.co.kr/booking/timetable"
-                    f"?brchNo={brch_no}&playDe={play_date}&movieNo={movie_no}"
+                    f"?brchNo={brch_no}&playDe={play_date}"
                 )
             else:
                 booking_url = "https://www.megabox.co.kr/booking"
