@@ -69,6 +69,9 @@ class MegaboxChecker(BaseChecker):
             event_progrs = (item.get("eventProgrs") or "").strip()
             if event_label and event_progrs:
                 event_label = f"{event_label}({event_progrs})"
+            elif not event_label and event_progrs:
+                # eventDivCdNm이 null이어도 eventProgrs(상영후/상영전)가 있으면 무대인사
+                event_label = f"무대인사({event_progrs})"
             key = (title, brch_nm, event_label, play_date, play_start_time)
             if key in seen:
                 continue
@@ -153,6 +156,9 @@ class MegaboxChecker(BaseChecker):
             event_progrs = (item.get("eventProgrs") or "").strip()
             if event_label and event_progrs:
                 event_label = f"{event_label}({event_progrs})"
+            elif not event_label and event_progrs:
+                # eventDivCdNm이 null이어도 eventProgrs(상영후/상영전)가 있으면 무대인사
+                event_label = f"무대인사({event_progrs})"
 
             play_date = item.get("_play_date", "")
             play_start_time = item.get("playStartTime", "")
