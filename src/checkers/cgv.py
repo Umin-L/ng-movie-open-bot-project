@@ -221,43 +221,48 @@ class CGVChecker(BaseChecker):
             return self._fetch_by_branches(branches, sync_playwright, days_ahead)
         return self._fetch_all(sync_playwright)
 
+    @staticmethod
+    def _get_proxy() -> str:
+        """환경변수 CGV_PROXY_URL에서 프록시 URL 반환. 예: socks5://localhost:1080"""
+        import os
+        return os.environ.get("CGV_PROXY_URL", "")
+
     # ── 지점 지정 없음: 전국 예매 가능 목록 ──────────────────────────
     def _fetch_all(self, sync_playwright) -> List[MovieInfo]:
-        # 먼저 모바일 사이트(requests)로 시도 — PC 사이트가 IP 차단된 경우 대안
         import requests as req
+        proxy_url = self._get_proxy()
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+        if proxy_url:
+            print(f"[CGV] 프록시 사용: {proxy_url}")
+
         try:
             resp = req.get(
-                CGV_MOBILE_URL,
+                CGV_MOVIES_URL,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                    "User-Agent": self.HEADERS["User-Agent"],
                     "Accept-Language": "ko-KR,ko;q=0.9",
-                    "Referer": "https://m.cgv.co.kr/",
+                    "Referer": "https://www.cgv.co.kr/",
                 },
+                proxies=proxies,
                 timeout=15,
             )
             from bs4 import BeautifulSoup
-            from collections import Counter
             soup = BeautifulSoup(resp.text, "lxml")
-            all_classes = []
-            for el in soup.find_all(True):
-                cls = el.get("class")
-                if cls:
-                    all_classes.extend(cls)
-            top10 = [c for c, _ in Counter(all_classes).most_common(10)]
-            print(f"[CGV] 모바일 status={resp.status_code}, HTML길이={len(resp.text)}, 클래스={top10}")
-
-            movies = self._parse_mobile_movies(resp.text)
-            if movies:
-                print(f"[CGV] 모바일 파싱 성공: {len(movies)}개")
-                return movies
-            print("[CGV] 모바일 파싱 결과 없음 — PC Playwright 시도")
+            if soup.select_one(".mets01081_Case2, .errorPage"):
+                print(f"[CGV] mets01081 에러 페이지 (status={resp.status_code})")
+            else:
+                movies = self._parse_movies_page(resp.text)
+                if movies:
+                    return movies
+                print(f"[CGV] 파싱 결과 없음 (HTML길이={len(resp.text)})")
         except Exception as e:
-            print(f"[CGV] 모바일 요청 실패: {e}")
+            print(f"[CGV] 요청 실패: {e}")
 
-        # 모바일 실패 시 PC 사이트 Playwright 폴백
+        # requests 실패 시 Playwright 폴백
         try:
+            pw_proxy = {"server": proxy_url} if proxy_url else None
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                browser = p.chromium.launch(headless=True, proxy=pw_proxy)
                 page = browser.new_page(
                     user_agent=self.HEADERS["User-Agent"],
                     extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
@@ -267,7 +272,7 @@ class CGVChecker(BaseChecker):
                 browser.close()
             return self._parse_movies_page(html)
         except Exception as e:
-            print(f"[CGV] PC 조회 오류: {e}")
+            print(f"[CGV] Playwright 조회 오류: {e}")
             return []
 
     # ── 지점 지정: 영화별 상영 페이지로 지점 매칭 ───────────────────
@@ -285,6 +290,7 @@ class CGVChecker(BaseChecker):
             for d in range(days_ahead + 1)
         ]
 
+        proxy_url = self._get_proxy()
         session = req.Session()
         session.headers.update({
             "User-Agent": self.HEADERS["User-Agent"],
@@ -292,6 +298,8 @@ class CGVChecker(BaseChecker):
             "Accept-Language": "ko-KR,ko;q=0.9",
             "Referer": "https://www.cgv.co.kr/",
         })
+        if proxy_url:
+            session.proxies.update({"http": proxy_url, "https": proxy_url})
 
         # 1. /movies/ 에서 전체 영화 목록 + 코드 수집 (Playwright, 접근 가능)
         global_movies = self._fetch_all(sync_playwright)
