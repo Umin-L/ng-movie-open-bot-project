@@ -14,7 +14,7 @@ from .base import BaseChecker, MovieInfo
 
 CGV_MOVIES_URL      = "https://www.cgv.co.kr/movies/"
 CGV_MOBILE_URL      = "https://m.cgv.co.kr/WebApp/MovieV4/MovieList.aspx"
-CGV_SCHEDULE_URL    = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
+CGV_SCHEDULE_URL    = "https://www.cgv.co.kr/common/showtimes/"
 CGV_DETAIL_BASE     = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
 
 # ── 전국 CGV 지점 정적 DB (2026-04 기준) ──────────────────────────────────
@@ -296,6 +296,8 @@ class CGVChecker(BaseChecker):
                         )
                         try:
                             page.goto(url, wait_until="networkidle", timeout=20000)
+                            actual_url = page.url
+                            print(f"[CGV] {theater['name']} {date_str}: 이동URL={actual_url}")
                             html = page.content()
                             if len(html) < 3000:
                                 print(f"[CGV] {theater['name']} {date_str}: HTML 짧음({len(html)}), 스킵")
