@@ -28,6 +28,7 @@ _ACCOMPANY_LABEL = {
     70:  "2D",
     230: "스페셜상영회",
     260: "싱어롱",
+    430: "오리지널",
 }
 
 _BASE_PARAM = {
@@ -126,8 +127,6 @@ class LotteChecker(BaseChecker):
                     start_time  = item.get("StartTime", "")    # "09:50"
                     accompany   = item.get("AccompanyTypeCode", 10)
                     event_label = _ACCOMPANY_LABEL.get(accompany, "")
-                    if accompany and accompany != 10:
-                        print(f"[롯데시네마] AccompanyTypeCode={accompany} label={event_label} title={item.get('MovieNameKR','')}")
 
                     play_date_key = play_dt.replace("-", "") if play_dt else ""
 
