@@ -287,33 +287,52 @@ class CGVChecker(BaseChecker):
                 )
                 page = ctx.new_page()
 
+                # 첫 번째 지점/날짜만 디버그 (URL 확인용)
+                first_theater = matched[0]
+                first_date = dates[0]
+                captured_all: list = []
+
+                def handle_all(resp):
+                    if "api.cgv.co.kr" in resp.url:
+                        captured_all.append(resp.url)
+
+                page.on("response", handle_all)
+                nav_url = (
+                    f"https://www.cgv.co.kr/cnm/movieBook/cinema"
+                    f"?siteNo={first_theater['code']}&scnYmd={first_date}"
+                )
+                try:
+                    page.goto(nav_url, wait_until="networkidle", timeout=25000)
+                except Exception as e:
+                    print(f"[CGV] 네비 오류: {e}")
+                page.remove_listener("response", handle_all)
+                print(f"[CGV] 실제URL={page.url}")
+                print(f"[CGV] api.cgv.co.kr 호출 목록: {captured_all[:10]}")
+
                 for theater in matched:
                     for date_str in dates:
                         captured: list = []
 
-                        def handle_response(resp, _theater=theater, _date=date_str):
+                        def handle_response(resp, _cap=captured):
                             if "searchMovScnInfo" in resp.url:
                                 try:
-                                    captured.append(resp.json())
+                                    _cap.append(resp.json())
                                 except Exception:
                                     pass
 
                         page.on("response", handle_response)
-                        nav_url = (
+                        nav_url2 = (
                             f"https://www.cgv.co.kr/cnm/movieBook/cinema"
                             f"?siteNo={theater['code']}&scnYmd={date_str}"
                         )
                         try:
-                            page.goto(nav_url, wait_until="networkidle", timeout=25000)
+                            page.goto(nav_url2, wait_until="networkidle", timeout=25000)
                         except Exception as e:
                             print(f"[CGV] {theater['name']} {date_str} 네비 오류: {e}")
                         page.remove_listener("response", handle_response)
 
                         print(f"[CGV] {theater['name']} {date_str}: 캡처={len(captured)}개")
                         for data in captured:
-                            if theater == matched[0] and date_str == dates[0] and captured.index(data) == 0:
-                                import json as _json
-                                print(f"[CGV] API 응답 샘플: {_json.dumps(data, ensure_ascii=False)[:400]}")
                             branch_movies = self._parse_scn_api(data, theater["name"], date_str)
                             for m in branch_movies:
                                 key = (m.title, m.branch, m.event_label, m.play_date)
