@@ -125,6 +125,8 @@ class LotteChecker(BaseChecker):
                     start_time  = item.get("StartTime", "")    # "09:50"
                     accompany   = item.get("AccompanyTypeCode", 10)
                     event_label = _ACCOMPANY_LABEL.get(accompany, "")
+                    if accompany and accompany != 10:
+                        print(f"[롯데시네마] AccompanyTypeCode={accompany} label={event_label} title={item.get('MovieNameKR','')}")
 
                     play_date_key = play_dt.replace("-", "") if play_dt else ""
 
