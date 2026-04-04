@@ -229,36 +229,11 @@ class CGVChecker(BaseChecker):
 
     # ── 지점 지정 없음: 전국 예매 가능 목록 ──────────────────────────
     def _fetch_all(self, sync_playwright) -> List[MovieInfo]:
-        import requests as req
         proxy_url = self._get_proxy()
-        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
         if proxy_url:
             print(f"[CGV] 프록시 사용: {proxy_url}")
 
-        try:
-            resp = req.get(
-                CGV_MOVIES_URL,
-                headers={
-                    "User-Agent": self.HEADERS["User-Agent"],
-                    "Accept-Language": "ko-KR,ko;q=0.9",
-                    "Referer": "https://www.cgv.co.kr/",
-                },
-                proxies=proxies,
-                timeout=15,
-            )
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(resp.text, "lxml")
-            if soup.select_one(".mets01081_Case2, .errorPage"):
-                print(f"[CGV] mets01081 에러 페이지 (status={resp.status_code})")
-            else:
-                movies = self._parse_movies_page(resp.text)
-                if movies:
-                    return movies
-                print(f"[CGV] 파싱 결과 없음 (HTML길이={len(resp.text)})")
-        except Exception as e:
-            print(f"[CGV] 요청 실패: {e}")
-
-        # requests 실패 시 Playwright 폴백
+        # Playwright로 JS 렌더링 (프록시 지원)
         try:
             pw_proxy = {"server": proxy_url} if proxy_url else None
             with sync_playwright() as p:
@@ -270,7 +245,15 @@ class CGVChecker(BaseChecker):
                 page.goto(CGV_MOVIES_URL, wait_until="networkidle", timeout=30000)
                 html = page.content()
                 browser.close()
-            return self._parse_movies_page(html)
+
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "lxml")
+            if soup.select_one(".mets01081_Case2, .errorPage"):
+                print(f"[CGV] Playwright: mets01081 에러 페이지 (HTML길이={len(html)})")
+                return []
+            movies = self._parse_movies_page(html)
+            print(f"[CGV] Playwright 파싱 완료: {len(movies)}개")
+            return movies
         except Exception as e:
             print(f"[CGV] Playwright 조회 오류: {e}")
             return []
