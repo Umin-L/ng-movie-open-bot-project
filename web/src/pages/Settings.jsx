@@ -60,7 +60,6 @@ export default function Settings({ session }) {
   const [movies,    setMovies]   = useState([])
   const [branches,  setBranches] = useState([])
   const [evLabels,  setEvLabels] = useState(DEFAULT_EVENT_LABELS)
-  const [cgv,       setCgv]      = useState(true)
   const [lotte,     setLotte]    = useState(true)
   const [megabox,   setMegabox]  = useState(true)
   const [daysAhead,     setDaysAhead]    = useState(0)
@@ -88,7 +87,6 @@ export default function Settings({ session }) {
       setMovies(cfg.movies || [])
       setBranches(cfg.branches || [])
       setEvLabels(cfg.event_labels || DEFAULT_EVENT_LABELS)
-      setCgv(cfg.cgv_enabled ?? true)
       setLotte(cfg.lotte_enabled ?? true)
       setMegabox(cfg.megabox_enabled ?? true)
       setDaysAhead(cfg.check_days_ahead ?? 0)
@@ -120,7 +118,6 @@ export default function Settings({ session }) {
       movies,
       branches,
       event_labels:            evLabels,
-      cgv_enabled:             cgv,
       lotte_enabled:           lotte,
       megabox_enabled:         megabox,
       check_days_ahead:        daysAhead,
@@ -281,8 +278,7 @@ export default function Settings({ session }) {
             <span>60분</span>
           </div>
           <div className="form-hint">
-            짧을수록 빠르게 감지하지만 서버 부하가 증가합니다.<br />
-            🔴 CGV 활성화 시 Playwright 크롤링으로 인해 최소 3분 이상을 권장합니다.
+            짧을수록 빠르게 감지하지만 서버 부하가 증가합니다.
           </div>
         </div>
 
@@ -292,13 +288,6 @@ export default function Settings({ session }) {
       <div className="card">
         <div className="card-title">🏟️ 감시할 영화관</div>
         <div>
-          <div className="toggle-row">
-            <div>
-              <div className="toggle-label">🔴 CGV</div>
-              <div className="toggle-desc">Playwright 기반 크롤링 (다소 느림)</div>
-            </div>
-            <Toggle id="cgv" checked={cgv} onChange={setCgv} />
-          </div>
           <div className="toggle-row">
             <div>
               <div className="toggle-label">🎯 롯데시네마</div>

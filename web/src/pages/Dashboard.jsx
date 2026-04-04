@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 const THEATER_BADGE = {
-  'CGV':    { cls: 'badge-cgv',     icon: '🔴' },
   '롯데시네마': { cls: 'badge-lotte',   icon: '🎯' },
   '메가박스':  { cls: 'badge-megabox', icon: '🟣' },
 }

@@ -207,7 +207,6 @@ input:focus, select:focus { border-color: var(--primary); }
   font-size: 12px;
   font-weight: 600;
 }
-.badge-cgv      { background: #e8311a22; color: #e8311a; }
 .badge-lotte    { background: #d4003622; color: #ff4d6d; }
 .badge-megabox  { background: #7c6cf822; color: #a89cf8; }
 .badge-event    { background: #f0a83222; color: var(--warning); }
