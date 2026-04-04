@@ -24,7 +24,6 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-from src.checkers.cgv import CGVChecker
 from src.checkers.lotte import LotteChecker
 from src.checkers.megabox import MegaboxChecker
 from src.checkers.base import MovieInfo
@@ -163,8 +162,6 @@ def check_for_user(cfg: dict) -> list:
     days_ahead = int(cfg.get("check_days_ahead", 0))
 
     checkers = []
-    if cfg.get("cgv_enabled", True):
-        checkers.append(CGVChecker())
     if cfg.get("lotte_enabled", True):
         checkers.append(LotteChecker())
     if cfg.get("megabox_enabled", True):
