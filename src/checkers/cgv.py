@@ -287,58 +287,48 @@ class CGVChecker(BaseChecker):
                 )
                 page = ctx.new_page()
 
-                # 첫 번째 지점/날짜만 디버그 (URL 확인용)
-                first_theater = matched[0]
-                first_date = dates[0]
-                captured_all: list = []
-
-                def handle_all(resp):
-                    if "api.cgv.co.kr" in resp.url:
-                        captured_all.append(resp.url)
-
-                page.on("response", handle_all)
-                nav_url = (
-                    f"https://www.cgv.co.kr/cnm/movieBook/cinema"
-                    f"?siteNo={first_theater['code']}&scnYmd={first_date}"
-                )
+                # CGV 홈으로 워밍업 (Cloudflare 쿠키 + cgv.co.kr Origin 확보)
                 try:
-                    page.goto(nav_url, wait_until="networkidle", timeout=25000)
-                except Exception as e:
-                    print(f"[CGV] 네비 오류: {e}")
-                page.remove_listener("response", handle_all)
-                print(f"[CGV] 실제URL={page.url}")
-                print(f"[CGV] api.cgv.co.kr 호출 목록: {captured_all[:10]}")
+                    page.goto("https://cgv.co.kr/", wait_until="networkidle", timeout=25000)
+                except Exception:
+                    pass
+                print(f"[CGV] 워밍업 URL={page.url}")
 
                 for theater in matched:
                     for date_str in dates:
-                        captured: list = []
-
-                        def handle_response(resp, _cap=captured):
-                            if "searchMovScnInfo" in resp.url:
-                                try:
-                                    _cap.append(resp.json())
-                                except Exception:
-                                    pass
-
-                        page.on("response", handle_response)
-                        nav_url2 = (
-                            f"https://www.cgv.co.kr/cnm/movieBook/cinema"
-                            f"?siteNo={theater['code']}&scnYmd={date_str}"
+                        api_url = (
+                            f"https://api.cgv.co.kr/cnm/atkt/searchMovScnInfo"
+                            f"?coCd=A420&siteNo={theater['code']}&scnYmd={date_str}&rtctlScopCd=08"
                         )
                         try:
-                            page.goto(nav_url2, wait_until="networkidle", timeout=25000)
-                        except Exception as e:
-                            print(f"[CGV] {theater['name']} {date_str} 네비 오류: {e}")
-                        page.remove_listener("response", handle_response)
-
-                        print(f"[CGV] {theater['name']} {date_str}: 캡처={len(captured)}개")
-                        for data in captured:
+                            data = page.evaluate(f"""
+                                async () => {{
+                                    const resp = await fetch('{api_url}', {{
+                                        credentials: 'include',
+                                        headers: {{
+                                            'Accept': 'application/json',
+                                            'Accept-Language': 'ko-KR,ko;q=0.9'
+                                        }}
+                                    }});
+                                    if (!resp.ok) return {{error: resp.status}};
+                                    return await resp.json();
+                                }}
+                            """)
+                            if isinstance(data, dict) and data.get("error"):
+                                print(f"[CGV] {theater['name']} {date_str}: fetch 오류={data['error']}")
+                                continue
+                            if theater == matched[0] and date_str == dates[0]:
+                                import json as _json
+                                print(f"[CGV] API 샘플: {_json.dumps(data, ensure_ascii=False)[:400]}")
                             branch_movies = self._parse_scn_api(data, theater["name"], date_str)
+                            print(f"[CGV] {theater['name']} {date_str}: {len(branch_movies)}개")
                             for m in branch_movies:
                                 key = (m.title, m.branch, m.event_label, m.play_date)
                                 if key not in seen:
                                     seen.add(key)
                                     movies.append(m)
+                        except Exception as e:
+                            print(f"[CGV] {theater['name']} {date_str} 오류: {e}")
 
                 browser.close()
         except Exception as e:
