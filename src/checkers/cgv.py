@@ -237,9 +237,10 @@ class CGVChecker(BaseChecker):
             print(f"[CGV] 전체 조회 오류: {e}")
             return []
 
-    # ── 지점 지정: 지점별 상영 스케줄 조회 ──────────────────────────
+    # ── 지점 지정: 지점별 상영 스케줄 조회 (requests 기반) ──────────
     def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright, days_ahead: int = 0) -> List[MovieInfo]:
-        # 정적 DB에서 키워드 매칭으로 지점 코드 조회
+        import requests as req
+
         theaters = [t for t in _CGV_THEATERS if self.match_branch(t["name"], branch_keywords)]
         if not theaters:
             print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
@@ -251,45 +252,38 @@ class CGVChecker(BaseChecker):
             for d in range(days_ahead + 1)
         ]
 
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-                )
-                ctx = browser.new_context(
-                    user_agent=self.HEADERS["User-Agent"],
-                    extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
-                    viewport={"width": 1280, "height": 800},
-                )
-                sched_page = ctx.new_page()
-                movies = []
-                seen = set()
+        session = req.Session()
+        session.headers.update({
+            "User-Agent": self.HEADERS["User-Agent"],
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9",
+            "Referer": "https://www.cgv.co.kr/",
+        })
 
-                for theater in theaters:
-                    for date_str in dates:
-                        url = (
-                            f"{CGV_SCHEDULE_URL}"
-                            f"?areacode={theater['area']}"
-                            f"&theatercode={theater['code']}"
-                            f"&date={date_str}"
-                        )
-                        try:
-                            sched_page.goto(url, wait_until="networkidle", timeout=20000)
-                            schedule_html = sched_page.content()
-                            for m in self._parse_schedule_page(schedule_html, theater["name"], date_str):
-                                key = (m.title, m.branch, m.event_label, m.play_date)
-                                if key not in seen:
-                                    seen.add(key)
-                                    movies.append(m)
-                        except Exception as e:
-                            print(f"[CGV] {theater['name']} {date_str} 조회 오류: {e}")
+        movies = []
+        seen: set = set()
 
-                browser.close()
-                return movies
-        except Exception as e:
-            print(f"[CGV] 지점별 조회 오류: {e}")
-            return []
+        for theater in theaters:
+            for date_str in dates:
+                url = (
+                    f"{CGV_SCHEDULE_URL}"
+                    f"?areacode={theater['area']}"
+                    f"&theatercode={theater['code']}"
+                    f"&date={date_str}"
+                )
+                try:
+                    resp = session.get(url, timeout=15)
+                    html = resp.text
+                    print(f"[CGV] {theater['name']} {date_str}: status={resp.status_code}, HTML={len(html)}자")
+                    for m in self._parse_schedule_page(html, theater["name"], date_str):
+                        key = (m.title, m.branch, m.event_label, m.play_date)
+                        if key not in seen:
+                            seen.add(key)
+                            movies.append(m)
+                except Exception as e:
+                    print(f"[CGV] {theater['name']} {date_str} 조회 오류: {e}")
+
+        return movies
 
     # ── 파싱 ────────────────────────────────────────────────────
     def _parse_movies_page(self, html: str) -> List[MovieInfo]:
