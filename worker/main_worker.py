@@ -208,9 +208,18 @@ def check_for_user(cfg: dict) -> list:
 
 # ── 상태 비교 및 신규 감지 ──────────────────────────────────
 def detect_new(user_id: str, current: list) -> list:
+    # KST 자정 기준으로 오늘 저장된 상태만 "이미 감지됨"으로 처리
+    # → 날짜가 바뀌면 동일 영화도 다시 신규 감지 → 알림 재발송
+    from datetime import timedelta
+    KST = timezone(timedelta(hours=9))
+    today_start_kst = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_utc = today_start_kst.astimezone(timezone.utc)
+    filter_dt = today_start_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
     rows = sb_get("movie_states", {
-        "user_id": f"eq.{user_id}",
-        "select":  "title,theater,branch,event_label,play_date",
+        "user_id":     f"eq.{user_id}",
+        "detected_at": f"gte.{filter_dt}",
+        "select":      "title,theater,branch,event_label,play_date",
     })
     prev_keys = {
         (r["title"], r["theater"], r["branch"], r["event_label"], r.get("play_date", ""))
