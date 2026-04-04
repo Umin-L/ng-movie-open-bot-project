@@ -85,10 +85,23 @@ class CGVChecker(BaseChecker):
     def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright, days_ahead: int = 0) -> List[MovieInfo]:
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                    ],
+                )
                 ctx = browser.new_context(
                     user_agent=self.HEADERS["User-Agent"],
                     extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
+                    viewport={"width": 1280, "height": 800},
+                )
+                # webdriver 감지 우회
+                ctx.add_init_script(
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
                 )
 
                 theaters = self._get_theaters_via_playwright(ctx, branch_keywords)
@@ -144,18 +157,29 @@ class CGVChecker(BaseChecker):
         page = ctx.new_page()
         theaters = []
 
-        # 페이지 JS보다 먼저 인터셉터 주입
-        page.add_init_script(_INTERCEPT_SCRIPT)
+        # 페이지 JS보다 먼저 인터셉터 + webdriver 우회 주입
+        page.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});\n"
+            + _INTERCEPT_SCRIPT
+        )
 
         try:
+            # 메인 페이지 먼저 방문해서 세션/쿠키 세팅
+            page.goto("https://www.cgv.co.kr/", wait_until="domcontentloaded", timeout=20000)
+            page.wait_for_timeout(1000)
+
+            # theaters 페이지로 이동
             page.goto(CGV_THEATERS_URL, wait_until="networkidle", timeout=30000)
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(2000)
 
             # ── 페이지 구조 디버그 ──────────────────────────────────
             info = page.evaluate("""() => {
                 var html = document.documentElement.innerHTML;
                 return {
+                    url: window.location.href,
+                    title: document.title,
                     len: html.length,
+                    preview: html.substring(0, 600),
                     hasTheaterCode: html.indexOf('theatercode') !== -1 || html.indexOf('theaterCode') !== -1,
                     hasSiteNo: html.indexOf('siteNo') !== -1,
                     hasAreaCode: html.indexOf('areacode') !== -1 || html.indexOf('areaCode') !== -1,
@@ -163,12 +187,18 @@ class CGVChecker(BaseChecker):
                     areaTabCount: document.querySelectorAll(
                         'ul.list-area>li, #ulArea>li, .area-tab li, [class*="area"]>li'
                     ).length,
+                    cgvGlobals: Object.getOwnPropertyNames(window).filter(function(k){
+                        return /cgv|theater|cinema|area|region|site/i.test(k);
+                    }).slice(0, 15),
                 };
             }""")
-            print(f"[CGV] 페이지 정보: HTML길이={info.get('len')}, "
-                  f"theatercode={info.get('hasTheaterCode')}, siteNo={info.get('hasSiteNo')}, "
-                  f"areaCode={info.get('hasAreaCode')}, 캡처={info.get('captureKeys')}, "
-                  f"지역탭={info.get('areaTabCount')}")
+            print(f"[CGV] URL: {info.get('url')}")
+            print(f"[CGV] Title: {info.get('title')}")
+            print(f"[CGV] HTML길이={info.get('len')}, theatercode={info.get('hasTheaterCode')}, "
+                  f"siteNo={info.get('hasSiteNo')}, areaCode={info.get('hasAreaCode')}, "
+                  f"캡처={info.get('captureKeys')}, 지역탭={info.get('areaTabCount')}, "
+                  f"CGV전역={info.get('cgvGlobals')}")
+            print(f"[CGV] HTML 미리보기: {info.get('preview', '')[:400]}")
 
             # ── 지역 탭 클릭 시도 ──────────────────────────────────
             tab_selectors = [
