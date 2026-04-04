@@ -232,6 +232,25 @@ class CGVChecker(BaseChecker):
                 page.goto(CGV_MOVIES_URL, wait_until="networkidle", timeout=30000)
                 html = page.content()
                 browser.close()
+
+            # 디버그: 파싱 구조 확인
+            from bs4 import BeautifulSoup
+            from collections import Counter
+            soup = BeautifulSoup(html, "lxml")
+            imgs = soup.select("img[alt*='포스터']")
+            imgs_poster = soup.select("img[src*='Poster']")
+            print(f"[CGV] HTML길이={len(html)}, img[alt*포스터]={len(imgs)}, img[src*Poster]={len(imgs_poster)}")
+            all_classes = []
+            for el in soup.find_all(True):
+                cls = el.get("class")
+                if cls:
+                    all_classes.extend(cls)
+            top20 = [c for c, _ in Counter(all_classes).most_common(20)]
+            print(f"[CGV] 상위 클래스: {top20}")
+            if imgs_poster:
+                s = imgs_poster[0]
+                print(f"[CGV] 첫번째 포스터 src={s.get('src','')[:80]}, alt={s.get('alt','')[:40]}")
+
             return self._parse_movies_page(html)
         except Exception as e:
             print(f"[CGV] 전체 조회 오류: {e}")
