@@ -259,10 +259,8 @@ class CGVChecker(BaseChecker):
             print(f"[CGV] Playwright 조회 오류: {e}")
             return []
 
-    # ── 지점 지정: CGV API 직접 호출 ──────────────────────────────────
+    # ── 지점 지정: Playwright 인터셉트로 CGV API 응답 캡처 ─────────────
     def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright, days_ahead: int = 0) -> List[MovieInfo]:
-        import requests as req
-
         matched = [t for t in _CGV_THEATERS if self.match_branch(t["name"], branch_keywords)]
         if not matched:
             print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
@@ -275,43 +273,57 @@ class CGVChecker(BaseChecker):
         ]
 
         proxy_url = self._get_proxy()
-        session = req.Session()
-        session.headers.update({
-            "User-Agent": self.HEADERS["User-Agent"],
-            "Accept": "application/json",
-            "Accept-Language": "ko-KR,ko;q=0.9",
-            "Referer": "https://www.cgv.co.kr/",
-        })
-        if proxy_url:
-            session.proxies.update({"http": proxy_url, "https": proxy_url})
+        pw_proxy = {"server": proxy_url} if proxy_url else None
 
         movies = []
         seen: set = set()
 
-        for theater in matched:
-            for date_str in dates:
-                url = (
-                    f"{CGV_SCN_API}"
-                    f"?coCd=A420&siteNo={theater['code']}&scnYmd={date_str}&rtctlScopCd=08"
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, proxy=pw_proxy)
+                ctx = browser.new_context(
+                    user_agent=self.HEADERS["User-Agent"],
+                    extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
                 )
-                try:
-                    resp = session.get(url, timeout=10)
-                    print(f"[CGV] {theater['name']} {date_str}: status={resp.status_code}")
-                    if resp.status_code != 200:
-                        continue
-                    data = resp.json()
-                    # 디버그: 첫 응답 구조 확인
-                    if theater == matched[0] and date_str == dates[0]:
-                        import json as _json
-                        print(f"[CGV] API 응답 샘플: {_json.dumps(data, ensure_ascii=False)[:300]}")
-                    branch_movies = self._parse_scn_api(data, theater["name"], date_str)
-                    for m in branch_movies:
-                        key = (m.title, m.branch, m.event_label, m.play_date)
-                        if key not in seen:
-                            seen.add(key)
-                            movies.append(m)
-                except Exception as e:
-                    print(f"[CGV] {theater['name']} {date_str} 오류: {e}")
+                page = ctx.new_page()
+
+                for theater in matched:
+                    for date_str in dates:
+                        captured: list = []
+
+                        def handle_response(resp, _theater=theater, _date=date_str):
+                            if "searchMovScnInfo" in resp.url:
+                                try:
+                                    captured.append(resp.json())
+                                except Exception:
+                                    pass
+
+                        page.on("response", handle_response)
+                        nav_url = (
+                            f"https://www.cgv.co.kr/cnm/movieBook/cinema"
+                            f"?siteNo={theater['code']}&scnYmd={date_str}"
+                        )
+                        try:
+                            page.goto(nav_url, wait_until="networkidle", timeout=25000)
+                        except Exception as e:
+                            print(f"[CGV] {theater['name']} {date_str} 네비 오류: {e}")
+                        page.remove_listener("response", handle_response)
+
+                        print(f"[CGV] {theater['name']} {date_str}: 캡처={len(captured)}개")
+                        for data in captured:
+                            if theater == matched[0] and date_str == dates[0] and captured.index(data) == 0:
+                                import json as _json
+                                print(f"[CGV] API 응답 샘플: {_json.dumps(data, ensure_ascii=False)[:400]}")
+                            branch_movies = self._parse_scn_api(data, theater["name"], date_str)
+                            for m in branch_movies:
+                                key = (m.title, m.branch, m.event_label, m.play_date)
+                                if key not in seen:
+                                    seen.add(key)
+                                    movies.append(m)
+
+                browser.close()
+        except Exception as e:
+            print(f"[CGV] Playwright 오류: {e}")
 
         return movies
 
