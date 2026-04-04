@@ -295,9 +295,8 @@ class CGVChecker(BaseChecker):
                             f"?TheaterCode={theater['code']}&date={date_str}"
                         )
                         try:
-                            # 브라우저 쿠키를 재사용하는 경량 HTTP 요청
-                            resp = ctx.request.get(url, timeout=15000)
-                            html = resp.text()
+                            page.goto(url, wait_until="commit", timeout=15000)
+                            html = page.content()
                             if len(html) < 3000:
                                 print(f"[CGV] {theater['name']} {date_str}: HTML 짧음({len(html)}), 스킵")
                                 continue
