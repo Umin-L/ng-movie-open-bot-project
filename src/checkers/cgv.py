@@ -289,11 +289,11 @@ class CGVChecker(BaseChecker):
 
                 # playwright-stealth: 헤드리스 감지 우회
                 try:
-                    from playwright_stealth import stealth_sync
-                    stealth_sync(page)
+                    from playwright_stealth import stealth
+                    stealth(page)
                     print("[CGV] stealth 적용됨")
-                except ImportError:
-                    print("[CGV] playwright-stealth 없음, 일반 모드")
+                except Exception as se:
+                    print(f"[CGV] stealth 오류: {se}")
 
                 # CGV 홈으로 워밍업 (Cloudflare 쿠키 + cgv.co.kr Origin 확보)
                 try:
