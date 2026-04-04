@@ -287,6 +287,14 @@ class CGVChecker(BaseChecker):
                 )
                 page = ctx.new_page()
 
+                # playwright-stealth: 헤드리스 감지 우회
+                try:
+                    from playwright_stealth import stealth_sync
+                    stealth_sync(page)
+                    print("[CGV] stealth 적용됨")
+                except ImportError:
+                    print("[CGV] playwright-stealth 없음, 일반 모드")
+
                 # CGV 홈으로 워밍업 (Cloudflare 쿠키 + cgv.co.kr Origin 확보)
                 try:
                     page.goto("https://cgv.co.kr/", wait_until="networkidle", timeout=25000)
