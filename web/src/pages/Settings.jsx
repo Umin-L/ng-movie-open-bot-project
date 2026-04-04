@@ -5,6 +5,25 @@ import { supabase } from '../lib/supabase'
 const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'YourMovieAlertBot'
 const DEFAULT_EVENT_LABELS = ['무대인사', 'GV', '시사회', '시네마톡']
 
+// 롯데시네마 지역별 지점 프리셋
+const LOTTE_REGIONS = {
+  '서울': [
+    '가산디지털','가양','강동','건대입구','김포공항','노원','도곡','독산',
+    '서울대입구','수락산','수유','신대방(구로디지털역)','신도림','신림',
+    '에비뉴엘(명동)','영등포','용산','월드타워','은평(롯데몰)','중랑',
+    '청량리','합정','홍대입구',
+  ],
+  '경기/인천': [
+    '광교','광명(광명사거리)','광명아울렛','구리아울렛','동탄','라페스타',
+    '마석','별내','병점','부천(신중동역)','부평','부평갈산','부평역사',
+    '북수원(천천동)','산본피트인','서수원','성남중앙(신흥역)','센트럴락',
+    '송탄','수원(수원역)','수지','시화(정왕역)','시흥장현','안산','안산고잔',
+    '안성','안양일번가','용인기흥','용인역북','위례','의정부민락','인덕원',
+    '인천아시아드','인천터미널','진접','파주롯데아울렛','파주야당','파주운정',
+    '판교(창조경제밸리)','평촌(범계역)','하남미사','향남',
+  ],
+}
+
 /* ── 태그 입력 컴포넌트 ── */
 function TagInput({ value = [], onChange, placeholder }) {
   const [input, setInput] = useState('')
@@ -219,6 +238,61 @@ export default function Settings({ session }) {
             placeholder="지점명 입력 후 Enter (비우면 전국)"
           />
           <div className="form-hint">예: 코엑스, 강남, 홍대, 월드타워</div>
+
+          {/* 롯데 지역 빠른선택 */}
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+              🎯 롯데시네마 지역 빠른선택
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {Object.entries(LOTTE_REGIONS).map(([region, list]) => {
+                const allSelected = list.every(b => branches.includes(b))
+                const toggle = () => {
+                  if (allSelected) {
+                    setBranches(branches.filter(b => !list.includes(b)))
+                  } else {
+                    const merged = [...branches]
+                    list.forEach(b => { if (!merged.includes(b)) merged.push(b) })
+                    setBranches(merged)
+                  }
+                }
+                return (
+                  <button
+                    key={region}
+                    type="button"
+                    onClick={toggle}
+                    style={{
+                      padding: '4px 12px',
+                      fontSize: 12,
+                      borderRadius: 20,
+                      border: `1px solid ${allSelected ? 'var(--primary)' : 'var(--border)'}`,
+                      background: allSelected ? 'var(--primary)' : 'transparent',
+                      color: allSelected ? '#fff' : 'var(--text-muted)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {allSelected ? '✓ ' : ''}{region} ({list.length})
+                  </button>
+                )
+              })}
+              {(LOTTE_REGIONS['서울'].some(b => branches.includes(b)) ||
+                LOTTE_REGIONS['경기/인천'].some(b => branches.includes(b))) && (
+                <button
+                  type="button"
+                  onClick={() => setBranches(branches.filter(
+                    b => !LOTTE_REGIONS['서울'].includes(b) && !LOTTE_REGIONS['경기/인천'].includes(b)
+                  ))}
+                  style={{
+                    padding: '4px 12px', fontSize: 12, borderRadius: 20,
+                    border: '1px solid var(--danger)', background: 'transparent',
+                    color: 'var(--danger)', cursor: 'pointer',
+                  }}
+                >
+                  전체 해제
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="form-group">
