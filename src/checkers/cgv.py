@@ -295,7 +295,7 @@ class CGVChecker(BaseChecker):
                             f"?TheaterCode={theater['code']}&date={date_str}"
                         )
                         try:
-                            page.goto(url, wait_until="commit", timeout=15000)
+                            page.goto(url, wait_until="networkidle", timeout=20000)
                             html = page.content()
                             if len(html) < 3000:
                                 print(f"[CGV] {theater['name']} {date_str}: HTML 짧음({len(html)}), 스킵")
@@ -496,21 +496,15 @@ class CGVChecker(BaseChecker):
         soup = BeautifulSoup(html, "lxml")
         movies = []
 
-        # 디버그: 파싱 구조 확인 (추후 제거)
-        all_els = soup.select("li, article, div.movie, .item")
-        print(f"[CGV:{branch_name}] HTML길이={len(html)}, 전체li/article={len(all_els)}")
-        if len(html) < 500 or not all_els:
-            print(f"[CGV:{branch_name}] HTML미리보기: {html[:800]}")
-        else:
-            # 실제 구조 파악용 - 첫 번째 의미있는 클래스 목록 출력
-            classes = []
-            for el in soup.find_all(True):
-                cls = el.get("class")
-                if cls:
-                    classes.extend(cls)
-            from collections import Counter
-            top = [c for c, _ in Counter(classes).most_common(20)]
-            print(f"[CGV:{branch_name}] 상위 클래스: {top}")
+        # 디버그: 페이지 구조 파악
+        from collections import Counter
+        all_classes = []
+        for el in soup.find_all(True):
+            cls = el.get("class")
+            if cls:
+                all_classes.extend(cls)
+        top20 = [c for c, _ in Counter(all_classes).most_common(20)]
+        print(f"[CGV:{branch_name}] HTML길이={len(html)}, 상위클래스={top20}")
 
         for li in soup.select(".sect-showtimes ul li, ul.list-schedule li"):
             title_tag = li.select_one(
