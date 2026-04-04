@@ -12,9 +12,10 @@ from typing import List
 
 from .base import BaseChecker, MovieInfo
 
-CGV_MOVIES_URL   = "https://www.cgv.co.kr/movies/"
-CGV_SCHEDULE_URL = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
-CGV_DETAIL_BASE  = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
+CGV_MOVIES_URL      = "https://www.cgv.co.kr/movies/"
+CGV_MOBILE_URL      = "https://m.cgv.co.kr/WebApp/MovieV4/MovieList.aspx"
+CGV_SCHEDULE_URL    = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
+CGV_DETAIL_BASE     = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
 
 # ── 전국 CGV 지점 정적 DB (2026-04 기준) ──────────────────────────────────
 # api.cgv.co.kr 가 Oracle Cloud IP에서 차단되므로 정적으로 내장
@@ -222,6 +223,38 @@ class CGVChecker(BaseChecker):
 
     # ── 지점 지정 없음: 전국 예매 가능 목록 ──────────────────────────
     def _fetch_all(self, sync_playwright) -> List[MovieInfo]:
+        # 먼저 모바일 사이트(requests)로 시도 — PC 사이트가 IP 차단된 경우 대안
+        import requests as req
+        try:
+            resp = req.get(
+                CGV_MOBILE_URL,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                    "Accept-Language": "ko-KR,ko;q=0.9",
+                    "Referer": "https://m.cgv.co.kr/",
+                },
+                timeout=15,
+            )
+            from bs4 import BeautifulSoup
+            from collections import Counter
+            soup = BeautifulSoup(resp.text, "lxml")
+            all_classes = []
+            for el in soup.find_all(True):
+                cls = el.get("class")
+                if cls:
+                    all_classes.extend(cls)
+            top10 = [c for c, _ in Counter(all_classes).most_common(10)]
+            print(f"[CGV] 모바일 status={resp.status_code}, HTML길이={len(resp.text)}, 클래스={top10}")
+
+            movies = self._parse_mobile_movies(resp.text)
+            if movies:
+                print(f"[CGV] 모바일 파싱 성공: {len(movies)}개")
+                return movies
+            print("[CGV] 모바일 파싱 결과 없음 — PC Playwright 시도")
+        except Exception as e:
+            print(f"[CGV] 모바일 요청 실패: {e}")
+
+        # 모바일 실패 시 PC 사이트 Playwright 폴백
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
@@ -232,28 +265,9 @@ class CGVChecker(BaseChecker):
                 page.goto(CGV_MOVIES_URL, wait_until="networkidle", timeout=30000)
                 html = page.content()
                 browser.close()
-
-            # 디버그: 파싱 구조 확인
-            from bs4 import BeautifulSoup
-            from collections import Counter
-            soup = BeautifulSoup(html, "lxml")
-            imgs = soup.select("img[alt*='포스터']")
-            imgs_poster = soup.select("img[src*='Poster']")
-            print(f"[CGV] HTML길이={len(html)}, img[alt*포스터]={len(imgs)}, img[src*Poster]={len(imgs_poster)}")
-            all_classes = []
-            for el in soup.find_all(True):
-                cls = el.get("class")
-                if cls:
-                    all_classes.extend(cls)
-            top20 = [c for c, _ in Counter(all_classes).most_common(20)]
-            print(f"[CGV] 상위 클래스: {top20}")
-            if imgs_poster:
-                s = imgs_poster[0]
-                print(f"[CGV] 첫번째 포스터 src={s.get('src','')[:80]}, alt={s.get('alt','')[:40]}")
-
             return self._parse_movies_page(html)
         except Exception as e:
-            print(f"[CGV] 전체 조회 오류: {e}")
+            print(f"[CGV] PC 조회 오류: {e}")
             return []
 
     # ── 지점 지정: 영화별 상영 페이지로 지점 매칭 ───────────────────
@@ -390,6 +404,72 @@ class CGVChecker(BaseChecker):
                     extra="예매가능",
                     event_label=event_label,
                 ))
+        return movies
+
+    def _parse_mobile_movies(self, html: str) -> List[MovieInfo]:
+        """CGV 모바일 사이트에서 예매 가능 영화 파싱."""
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "lxml")
+        movies = []
+
+        # mets01081 에러 페이지 감지
+        if soup.select_one(".mets01081_Case2, .errorPage"):
+            print("[CGV] 모바일도 mets01081 에러 페이지")
+            return []
+
+        # 모바일 영화 목록: 다양한 셀렉터 시도
+        items = (
+            soup.select(".sect-movie-list li")
+            or soup.select(".movie-list li")
+            or soup.select("ul.list-movie li")
+            or soup.select(".movie-item")
+            or soup.select("li.item")
+        )
+        print(f"[CGV] 모바일 영화 항목 수: {len(items)}")
+
+        for item in items:
+            title_tag = (
+                item.select_one(".title-wrap .title")
+                or item.select_one(".tit-movie")
+                or item.select_one("strong.title")
+                or item.select_one(".movie-name")
+            )
+            if not title_tag:
+                continue
+            title = title_tag.get_text(strip=True)
+            if not title:
+                continue
+
+            # 예매 버튼 / 링크 확인
+            booking_tag = (
+                item.select_one("a[href*='ticketing'], a[href*='booking'], a.btn-booking")
+                or item.select_one("button.btn-booking, a.btn-reserve")
+            )
+            # 예매 불가 표시 없으면 예매 가능으로 간주
+            sold_out = item.select_one(".sold-out, .not-sale, .dday-box.end")
+            if sold_out:
+                continue
+
+            # 영화 코드 추출
+            code_tag = item.select_one("a[href*='MovieSeq='], a[href*='movieseq=']")
+            movie_code = ""
+            if code_tag:
+                href = code_tag.get("href", "")
+                m = re.search(r"[Mm]ovie[Ss]eq=(\w+)", href)
+                if m:
+                    movie_code = m.group(1)
+            booking_url = f"{CGV_DETAIL_BASE}{movie_code}" if movie_code else CGV_MOVIES_URL
+
+            event_label = self._detect_event_label(item)
+            movies.append(MovieInfo(
+                title=title,
+                theater="CGV",
+                booking_url=booking_url,
+                branch="",
+                extra="예매가능",
+                event_label=event_label,
+            ))
+
         return movies
 
     _EVENT_KEYWORDS = ["무대인사", "GV", "시사회", "무대 인사", "무대Q&A", "시네마톡"]
