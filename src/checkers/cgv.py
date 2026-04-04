@@ -2,8 +2,8 @@
 CGV 예매 가능 영화 체커 (Playwright 기반)
 
 지점 미지정: /movies/ 페이지 렌더링 → 예매하기 버튼 있는 영화 추출
-지점 지정:  /theaters/ 페이지 방문 → 네트워크 인터셉트로 지점 코드 수집
-           → 지역탭 클릭으로 미수집 지역 보완
+지점 지정:  /theaters/ 페이지 방문 → fetch/XHR 인터셉트 + 탭 클릭으로 지점 코드 수집
+           → HTML 직접 파싱 폴백 (onclick, data-* 속성)
            → /common/showtimes/iframeTheater.aspx 로 지점별 상영 스케줄 파싱
 """
 
@@ -13,10 +13,43 @@ from typing import List
 
 from .base import BaseChecker, MovieInfo
 
-CGV_MOVIES_URL    = "https://www.cgv.co.kr/movies/"
-CGV_THEATERS_URL  = "https://www.cgv.co.kr/theaters/"
-CGV_SCHEDULE_URL  = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
-CGV_DETAIL_BASE   = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
+CGV_MOVIES_URL   = "https://www.cgv.co.kr/movies/"
+CGV_THEATERS_URL = "https://www.cgv.co.kr/theaters/"
+CGV_SCHEDULE_URL = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
+CGV_DETAIL_BASE  = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
+
+# fetch/XHR 인터셉터: 페이지 JS보다 먼저 주입하여 CGV 인증 요청까지 캡처
+_INTERCEPT_SCRIPT = """
+window.__cgv_captures = {};
+(function() {
+  try {
+    var _f = window.fetch;
+    window.fetch = async function() {
+      var resp = await _f.apply(this, arguments);
+      var url = (typeof arguments[0] === 'string' ? arguments[0]
+                 : (arguments[0] && arguments[0].url)) || '';
+      if (url.indexOf('cgv.co.kr') !== -1) {
+        try { window.__cgv_captures[url] = await resp.clone().json(); } catch(e){}
+      }
+      return resp;
+    };
+  } catch(e){}
+  try {
+    var _xo = XMLHttpRequest.prototype.open;
+    var _xs = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(m, url) {
+      this.__cgv_url = url; return _xo.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function() {
+      this.addEventListener('load', function() {
+        if (this.__cgv_url && this.__cgv_url.indexOf('cgv.co.kr') !== -1)
+          try { window.__cgv_captures[this.__cgv_url] = JSON.parse(this.responseText); } catch(e){}
+      });
+      return _xs.apply(this, arguments);
+    };
+  } catch(e){}
+})();
+"""
 
 
 class CGVChecker(BaseChecker):
@@ -58,14 +91,12 @@ class CGVChecker(BaseChecker):
                     extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
                 )
 
-                # 1. 지점 목록 조회 (theaters 페이지 네트워크 인터셉트)
                 theaters = self._get_theaters_via_playwright(ctx, branch_keywords)
                 if not theaters:
                     print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
                     browser.close()
                     return []
 
-                # 2. 날짜 목록 생성 (오늘 ~ days_ahead 일 후)
                 dates = [
                     (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
                     for d in range(days_ahead + 1)
@@ -73,8 +104,6 @@ class CGVChecker(BaseChecker):
 
                 movies = []
                 seen = set()
-
-                # 3. 스케줄 조회용 페이지 생성
                 sched_page = ctx.new_page()
 
                 for theater in theaters:
@@ -105,6 +134,125 @@ class CGVChecker(BaseChecker):
             print(f"[CGV] 지점별 조회 오류: {e}")
             return []
 
+    # ── 지점 코드 조회 ───────────────────────────────────────────────
+    def _get_theaters_via_playwright(self, ctx, branch_keywords: List[str]) -> List[dict]:
+        """theaters 페이지에서 지점 코드를 수집한다.
+
+        1순위: fetch/XHR 인터셉터로 searchRegnList API 응답 캡처
+        2순위: HTML 파싱 (onclick 패턴 / data-* 속성)
+        """
+        page = ctx.new_page()
+        theaters = []
+
+        # 페이지 JS보다 먼저 인터셉터 주입
+        page.add_init_script(_INTERCEPT_SCRIPT)
+
+        try:
+            page.goto(CGV_THEATERS_URL, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(1500)
+
+            # ── 페이지 구조 디버그 ──────────────────────────────────
+            info = page.evaluate("""() => {
+                var html = document.documentElement.innerHTML;
+                return {
+                    len: html.length,
+                    hasTheaterCode: html.indexOf('theatercode') !== -1 || html.indexOf('theaterCode') !== -1,
+                    hasSiteNo: html.indexOf('siteNo') !== -1,
+                    hasAreaCode: html.indexOf('areacode') !== -1 || html.indexOf('areaCode') !== -1,
+                    captureKeys: Object.keys(window.__cgv_captures),
+                    areaTabCount: document.querySelectorAll(
+                        'ul.list-area>li, #ulArea>li, .area-tab li, [class*="area"]>li'
+                    ).length,
+                };
+            }""")
+            print(f"[CGV] 페이지 정보: HTML길이={info.get('len')}, "
+                  f"theatercode={info.get('hasTheaterCode')}, siteNo={info.get('hasSiteNo')}, "
+                  f"areaCode={info.get('hasAreaCode')}, 캡처={info.get('captureKeys')}, "
+                  f"지역탭={info.get('areaTabCount')}")
+
+            # ── 지역 탭 클릭 시도 ──────────────────────────────────
+            tab_selectors = [
+                "ul.list-area > li",
+                "#ulArea > li",
+                ".area-tab li",
+                "div.wrap-theater-area li",
+                "[class*='list-area'] li",
+                "a[onclick*='area'], li[onclick*='area']",
+            ]
+            clicked = 0
+            for sel in tab_selectors:
+                els = page.query_selector_all(sel)
+                if els:
+                    print(f"[CGV] 지역 탭 셀렉터 '{sel}': {len(els)}개")
+                    for el in els:
+                        try:
+                            el.click()
+                            page.wait_for_timeout(600)
+                            clicked += 1
+                        except Exception:
+                            pass
+                    break  # 첫 번째로 일치하는 셀렉터만 사용
+
+            if clicked:
+                page.wait_for_timeout(1000)
+
+            # ── 1순위: 인터셉터 캡처 결과 처리 ──────────────────────
+            captures = page.evaluate("() => window.__cgv_captures")
+            print(f"[CGV] 캡처된 API 수: {len(captures)}")
+            for c_url, data in captures.items():
+                print(f"[CGV]   - {c_url[:80]}")
+                if "searchRegnList" in c_url:
+                    m = re.search(r'regnGrpCd=([^&]+)', c_url)
+                    area_code = m.group(1) if m else ""
+                    for site in (data.get("data", {}).get("siteList", []) or []):
+                        name = site.get("siteNm", "")
+                        code = site.get("siteNo", "")
+                        if code and self.match_branch(name, branch_keywords):
+                            theaters.append({"name": name, "area": area_code, "code": code})
+
+            # ── 2순위: HTML 직접 파싱 ─────────────────────────────
+            if not theaters:
+                print("[CGV] 인터셉터 캡처 없음 → HTML 파싱 시도")
+                html = page.content()
+                theaters = self._parse_theaters_from_html(html, branch_keywords)
+
+        except Exception as e:
+            print(f"[CGV] 지점 조회 실패: {e}")
+        finally:
+            page.close()
+        return theaters
+
+    def _parse_theaters_from_html(self, html: str, branch_keywords: List[str]) -> List[dict]:
+        """theaters 페이지 HTML에서 지점 코드를 파싱한다 (폴백)."""
+        from bs4 import BeautifulSoup
+        theaters = []
+        soup = BeautifulSoup(html, "lxml")
+
+        # 패턴 1: data-theatercode / data-theater-code 속성
+        for el in soup.select("[data-theatercode], [data-theater-code], [data-siteNo]"):
+            name = el.get_text(strip=True)
+            code = (el.get("data-theatercode")
+                    or el.get("data-theater-code")
+                    or el.get("data-siteNo", ""))
+            area = (el.get("data-areacode")
+                    or el.get("data-area-code", ""))
+            if code and self.match_branch(name, branch_keywords):
+                theaters.append({"name": name, "area": area, "code": code})
+
+        # 패턴 2: onclick="...('areacode', 'theatercode')" 형식
+        if not theaters:
+            for el in soup.select("[onclick]"):
+                onclick = el.get("onclick", "")
+                m = re.search(r"['\"](\d{2})['\"].*?['\"](\d{4})['\"]", onclick)
+                if m:
+                    area, code = m.group(1), m.group(2)
+                    name = el.get_text(strip=True)
+                    if self.match_branch(name, branch_keywords):
+                        theaters.append({"name": name, "area": area, "code": code})
+
+        print(f"[CGV] HTML 파싱 결과: {len(theaters)}개")
+        return theaters
+
     # ── 파싱 ────────────────────────────────────────────────────
     def _parse_movies_page(self, html: str) -> List[MovieInfo]:
         from bs4 import BeautifulSoup
@@ -121,7 +269,6 @@ class CGVChecker(BaseChecker):
             movie_code = code_match.group(1) if code_match else ""
             booking_url = f"{CGV_DETAIL_BASE}{movie_code}" if movie_code else CGV_MOVIES_URL
 
-            # 부모 컨테이너에 "예매하기" 버튼 유무 확인
             container = poster
             has_booking = False
             for _ in range(12):
@@ -144,97 +291,10 @@ class CGVChecker(BaseChecker):
                 ))
         return movies
 
-    def _get_theaters_via_playwright(self, ctx, branch_keywords: List[str]) -> List[dict]:
-        """CGV theaters 페이지 네트워크 인터셉트로 지점 코드 수집.
-
-        CGV API는 X-Signature 헤더를 요구하므로, 페이지 자체 JS가 호출하는
-        API 응답을 인터셉트하는 방식을 사용한다.
-        """
-        page = ctx.new_page()
-        theaters = []
-        regions_data = []
-        sites_by_area: dict = {}
-
-        def on_response(response):
-            try:
-                url = response.url
-                if "searchAllRegionAndSite" in url:
-                    d = response.json()
-                    for r in (d.get("data", {}).get("regionInfo", []) or []):
-                        regions_data.append(r)
-                elif "searchRegnList" in url:
-                    m = re.search(r'regnGrpCd=([^&]+)', url)
-                    area_code = m.group(1) if m else ""
-                    d = response.json()
-                    if area_code:
-                        sites_by_area[area_code] = d.get("data", {}).get("siteList", [])
-            except Exception:
-                pass
-
-        page.on("response", on_response)
-
-        try:
-            # theaters 페이지: 자동으로 searchAllRegionAndSite 호출
-            page.goto(CGV_THEATERS_URL, wait_until="networkidle", timeout=30000)
-            page.wait_for_timeout(2000)
-
-            print(f"[CGV] 지역 목록: {len(regions_data)}개, 수집된 지역 데이터: {len(sites_by_area)}개")
-
-            # 인터셉트로 수집 안 된 지역: 탭 클릭으로 보완
-            for region in regions_data:
-                area_code = region.get("comCdval", "")
-                if area_code in sites_by_area:
-                    continue
-                # 여러 셀렉터 시도
-                clicked = False
-                for sel in [
-                    f"[data-areacode='{area_code}']",
-                    f"[data-area='{area_code}']",
-                    f"li[onclick*=\"'{area_code}'\"]",
-                    f"a[href*='areacode={area_code}']",
-                    f"button[value='{area_code}']",
-                ]:
-                    el = page.query_selector(sel)
-                    if el:
-                        el.click()
-                        page.wait_for_timeout(600)
-                        clicked = True
-                        break
-                if not clicked:
-                    # JS evaluate 로 직접 클릭 이벤트 발생
-                    page.evaluate(f"""() => {{
-                        const els = document.querySelectorAll('[class*="area"], [class*="region"], [id*="area"]');
-                        for (const el of els) {{
-                            if (el.textContent.includes('{region.get("comCdNm", "")}')) {{
-                                el.click(); break;
-                            }}
-                        }}
-                    }}""")
-                    page.wait_for_timeout(600)
-
-            page.wait_for_timeout(1000)
-            print(f"[CGV] 탭 클릭 후 지역 데이터: {len(sites_by_area)}개")
-
-            # 지점 매칭
-            for area_code, sites in sites_by_area.items():
-                for site in sites:
-                    name = site.get("siteNm", "")
-                    code = site.get("siteNo", "")
-                    if code and self.match_branch(name, branch_keywords):
-                        theaters.append({"name": name, "area": area_code, "code": code})
-
-        except Exception as e:
-            print(f"[CGV] 지점 조회 실패: {e}")
-        finally:
-            page.close()
-        return theaters
-
     # ── 이벤트 라벨 감지 ─────────────────────────────────────────────
     _EVENT_KEYWORDS = ["무대인사", "GV", "시사회", "무대 인사", "무대Q&A", "시네마톡"]
 
     def _detect_event_label(self, container) -> str:
-        """컨테이너 HTML에서 이벤트 라벨(무대인사/GV/시사회)을 감지한다."""
-        # 1. 전용 뱃지/태그 요소 탐색
         for sel in [
             ".badge-event", ".label-event", ".ico-event",
             "[class*='event']", "[class*='special']", "[class*='badge']",
@@ -245,7 +305,6 @@ class CGVChecker(BaseChecker):
                 for kw in self._EVENT_KEYWORDS:
                     if kw in text:
                         return kw
-        # 2. 컨테이너 전체 텍스트 폴백
         container_text = container.get_text()
         for kw in self._EVENT_KEYWORDS:
             if kw in container_text:
@@ -253,14 +312,10 @@ class CGVChecker(BaseChecker):
         return ""
 
     def _parse_schedule_page(self, html: str, branch_name: str, date_str: str = "") -> List[MovieInfo]:
-        """CGV iframeTheater 상영시간표 페이지에서 영화 목록 파싱."""
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html, "lxml")
         movies = []
 
-        date_display = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}" if date_str else ""
-
-        # 상영시간표 구조: .sect-showtimes > ul > li
         for li in soup.select(".sect-showtimes ul li, ul.list-schedule li"):
             title_tag = li.select_one(
                 "div.col-times div.info-movie a strong, .tit-movie strong, strong.title"
@@ -271,12 +326,11 @@ class CGVChecker(BaseChecker):
             if not title:
                 continue
 
-            # 예매 가능한 시간대가 하나라도 있으면 포함 (클래스 not 'not-sale')
             time_items = li.select("div.info-timetable ul li")
             has_available = any(
                 "not-sale" not in " ".join(t.get("class", []))
                 for t in time_items
-            ) if time_items else True  # 시간표 없으면 일단 포함
+            ) if time_items else True
 
             if has_available:
                 event_label = self._detect_event_label(li)
