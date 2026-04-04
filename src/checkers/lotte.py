@@ -7,6 +7,8 @@
 """
 
 import json
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import List
 
@@ -59,7 +61,7 @@ class LotteChecker(BaseChecker):
             return self._fetch_by_branches(branches, days_ahead)
         return self._fetch_all()
 
-    # ── 지점 지정 없음: 전국 예매 가능 목록 ──────────────────────────
+    # ── 지점 지정 없음: 전국 예매 가능 목록 + 샘플 지점 이벤트 감지 ──
     def _fetch_all(self) -> List[MovieInfo]:
         movies: List[MovieInfo] = []
         for play_yn, label in [("Y", "현재상영"), ("N", "개봉예정")]:
@@ -68,7 +70,42 @@ class LotteChecker(BaseChecker):
                 m = self._to_movie_info_simple(item, label)
                 if m:
                     movies.append(m)
+
+        # GetMoviesToBe 이벤트 필드가 null이므로
+        # 샘플 지점 30개 병렬 조회로 이벤트 라벨 보완
+        if movies:
+            self._enrich_event_labels(movies)
         return movies
+
+    def _enrich_event_labels(self, movies: List[MovieInfo]) -> None:
+        """샘플 지점 30개 병렬 조회로 이벤트 라벨 보완."""
+        title_map = {m.title: m for m in movies}  # title → MovieInfo
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        cinemas = self._get_cinema_list()
+        if not cinemas:
+            return
+        sample = random.sample(cinemas, min(30, len(cinemas)))
+
+        def check_cinema(cinema):
+            results = {}
+            seqs = self._call_play_sequence(cinema["full_id"], today)
+            for s in seqs:
+                title = s.get("MovieNameKR", "").strip()
+                if title not in title_map:
+                    continue
+                code = s.get("AccompanyTypeCode", 10)
+                label = _ACCOMPANY_LABEL.get(code, "")
+                if label:
+                    results[title] = label
+            return results
+
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futures = [ex.submit(check_cinema, c) for c in sample]
+            for fut in as_completed(futures):
+                for title, label in fut.result().items():
+                    if title in title_map and not title_map[title].event_label:
+                        title_map[title].event_label = label
 
     def _to_movie_info_simple(self, item: dict, label: str) -> "MovieInfo | None":
         title = item.get("MovieNameKR", "").strip()
