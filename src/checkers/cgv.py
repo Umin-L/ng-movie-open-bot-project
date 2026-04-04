@@ -352,6 +352,22 @@ class CGVChecker(BaseChecker):
         soup = BeautifulSoup(html, "lxml")
         movies = []
 
+        # 디버그: 파싱 구조 확인 (추후 제거)
+        all_els = soup.select("li, article, div.movie, .item")
+        print(f"[CGV:{branch_name}] HTML길이={len(html)}, 전체li/article={len(all_els)}")
+        if len(html) < 500 or not all_els:
+            print(f"[CGV:{branch_name}] HTML미리보기: {html[:800]}")
+        else:
+            # 실제 구조 파악용 - 첫 번째 의미있는 클래스 목록 출력
+            classes = []
+            for el in soup.find_all(True):
+                cls = el.get("class")
+                if cls:
+                    classes.extend(cls)
+            from collections import Counter
+            top = [c for c, _ in Counter(classes).most_common(20)]
+            print(f"[CGV:{branch_name}] 상위 클래스: {top}")
+
         for li in soup.select(".sect-showtimes ul li, ul.list-schedule li"):
             title_tag = li.select_one(
                 "div.col-times div.info-movie a strong, .tit-movie strong, strong.title"
