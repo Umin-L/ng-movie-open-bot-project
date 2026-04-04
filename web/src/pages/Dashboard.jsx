@@ -23,9 +23,11 @@ export default function Dashboard({ session }) {
   const [profile,    setProfile]    = useState(null)
   const [config,     setConfig]     = useState(null)
   const [loading,    setLoading]    = useState(true)
-  const [resetting,  setResetting]  = useState(false)
-  const [resetMsg,   setResetMsg]   = useState('')
-  const [showConfirm, setShowConfirm] = useState(false)
+  const [resetting,     setResetting]     = useState(false)
+  const [resetMsg,      setResetMsg]      = useState('')
+  const [showConfirm,   setShowConfirm]   = useState(false)
+  const [clearingHist,  setClearingHist]  = useState(false)
+  const [showHistConfirm, setShowHistConfirm] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -49,6 +51,14 @@ export default function Dashboard({ session }) {
     setProfile(prof)
     setConfig(cfg)
     setLoading(false)
+  }
+
+  async function clearHistory() {
+    setClearingHist(true)
+    setShowHistConfirm(false)
+    await supabase.from('detected_movies').delete().eq('user_id', session.user.id)
+    setDetections([])
+    setClearingHist(false)
   }
 
   async function resetState() {
@@ -198,8 +208,48 @@ export default function Dashboard({ session }) {
         </div>
       </div>
 
+      {/* 이력 초기화 확인 모달 */}
+      {showHistConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200
+        }}>
+          <div style={{
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 14, padding: 32, maxWidth: 360, width: '90%',
+            boxShadow: 'var(--shadow)'
+          }}>
+            <div style={{ fontSize: 32, marginBottom: 12, textAlign: 'center' }}>🗑️</div>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 8, textAlign: 'center' }}>
+              감지 이력 초기화
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24, textAlign: 'center', lineHeight: 1.6 }}>
+              모든 감지 이력이 삭제됩니다.<br />이 작업은 되돌릴 수 없습니다.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn-ghost" style={{ flex: 1 }}
+                onClick={() => setShowHistConfirm(false)}>취소</button>
+              <button className="btn-primary" style={{ flex: 1 }}
+                onClick={clearHistory}>삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 감지 이력 */}
-      <div className="section-title">최근 감지 이력</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div className="section-title" style={{ marginBottom: 0 }}>최근 감지 이력</div>
+        {detections.length > 0 && (
+          <button
+            className="btn-ghost"
+            style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={() => setShowHistConfirm(true)}
+            disabled={clearingHist}
+          >
+            {clearingHist ? <span className="spinner" /> : '🗑️'} 이력 초기화
+          </button>
+        )}
+      </div>
 
       {detections.length === 0 ? (
         <div className="empty-state">
