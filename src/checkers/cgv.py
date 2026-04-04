@@ -292,7 +292,9 @@ class CGVChecker(BaseChecker):
                     page.goto("https://cgv.co.kr/", wait_until="networkidle", timeout=25000)
                 except Exception:
                     pass
-                print(f"[CGV] 워밍업 URL={page.url}")
+                cookies = ctx.cookies()
+                cookie_names = [c["name"] for c in cookies]
+                print(f"[CGV] 워밍업 URL={page.url}, 쿠키={cookie_names}")
 
                 for theater in matched:
                     for date_str in dates:
