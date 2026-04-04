@@ -151,6 +151,9 @@ class CGVChecker(BaseChecker):
         theaters = []
 
         # CGV 지점 목록: data-areacode, data-theatercode 속성 또는 링크 파라미터
+        all_names = [a.get_text(strip=True) for a in soup.select("a[href*='theatercode'], [data-theatercode]")]
+        print(f"[CGV] 전체 지점 파싱 수: {len(all_names)}, 샘플: {all_names[:10]}")
+
         for a in soup.select("a[href*='theatercode'], [data-theatercode]"):
             name = a.get_text(strip=True)
             if not self.match_branch(name, branch_keywords):
@@ -172,6 +175,9 @@ class CGVChecker(BaseChecker):
             if code:
                 theaters.append({"name": name, "area": area, "code": code})
 
+        print(f"[CGV] 전체 파싱된 지점 수: {len(theaters)}")
+        if theaters:
+            print(f"[CGV] 지점 샘플: {[t['name'] for t in theaters[:10]]}")
         return theaters
 
     # ── 이벤트 라벨 감지 ─────────────────────────────────────────────
