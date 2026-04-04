@@ -32,6 +32,8 @@ export default function Dashboard({ session }) {
     loadData()
   }, [])
 
+  const CLEARED_KEY = `moviealert_cleared_${session.user.id}`
+
   async function loadData() {
     setLoading(true)
     const uid = session.user.id
@@ -46,7 +48,13 @@ export default function Dashboard({ session }) {
       supabase.from('user_configs').select('*').eq('user_id', uid).single(),
     ])
 
-    setDetections(dets || [])
+    // 이력 초기화 시각 이후 항목만 표시
+    const clearedAt = localStorage.getItem(CLEARED_KEY)
+    const filtered = clearedAt
+      ? (dets || []).filter(d => new Date(d.detected_at) > new Date(clearedAt))
+      : (dets || [])
+
+    setDetections(filtered)
     setProfile(prof)
     setConfig(cfg)
     setLoading(false)
@@ -55,6 +63,8 @@ export default function Dashboard({ session }) {
   async function clearHistory() {
     setClearingHist(true)
     setShowHistConfirm(false)
+    // 현재 시각을 cleared_at으로 저장 → 이후 재감지 항목도 표시 안 됨
+    localStorage.setItem(CLEARED_KEY, new Date().toISOString())
     await supabase.from('detected_movies').delete().eq('user_id', session.user.id)
     setDetections([])
     setClearingHist(false)
