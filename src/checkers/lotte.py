@@ -56,13 +56,14 @@ class LotteChecker(BaseChecker):
             "Referer": "https://www.lottecinema.co.kr/NLCJHS/Ticketing",
         }
 
-    def get_bookable_movies(self, branches: List[str] = None, days_ahead: int = 0) -> List[MovieInfo]:
+    def get_bookable_movies(self, branches: List[str] = None, days_ahead: int = 0,
+                             keywords: List[str] = None) -> List[MovieInfo]:
         if branches:
             return self._fetch_by_branches(branches, days_ahead)
-        return self._fetch_all()
+        return self._fetch_all(keywords=keywords)
 
-    # ── 지점 지정 없음: 전국 예매 가능 목록 + 샘플 지점 이벤트 감지 ──
-    def _fetch_all(self) -> List[MovieInfo]:
+    # ── 지점 지정 없음: 전국 예매 가능 목록 + 키워드 매칭 영화만 이벤트 보완 ──
+    def _fetch_all(self, keywords: List[str] = None) -> List[MovieInfo]:
         movies: List[MovieInfo] = []
         for play_yn, label in [("Y", "현재상영"), ("N", "개봉예정")]:
             items = self._call_movie_api(play_yn=play_yn)
@@ -71,21 +72,23 @@ class LotteChecker(BaseChecker):
                 if m:
                     movies.append(m)
 
-        # GetMoviesToBe 이벤트 필드가 null이므로
-        # 샘플 지점 30개 병렬 조회로 이벤트 라벨 보완
-        if movies:
-            self._enrich_event_labels(movies)
+        # 키워드 매칭된 영화만 이벤트 보완 (없으면 전체 스킵 → 빠름)
+        if keywords:
+            targets = [m for m in movies
+                       if any(kw in m.title for kw in keywords) and not m.event_label]
+            if targets:
+                self._enrich_event_labels(targets)
         return movies
 
     def _enrich_event_labels(self, movies: List[MovieInfo]) -> None:
-        """샘플 지점 30개 병렬 조회로 이벤트 라벨 보완."""
-        title_map = {m.title: m for m in movies}  # title → MovieInfo
+        """샘플 지점 15개 병렬 조회로 이벤트 라벨 보완 (키워드 매칭 영화 한정)."""
+        title_map = {m.title: m for m in movies}
         today = datetime.now().strftime("%Y-%m-%d")
 
         cinemas = self._get_cinema_list()
         if not cinemas:
             return
-        sample = random.sample(cinemas, min(30, len(cinemas)))
+        sample = random.sample(cinemas, min(15, len(cinemas)))
 
         def check_cinema(cinema):
             results = {}
@@ -100,7 +103,7 @@ class LotteChecker(BaseChecker):
                     results[title] = label
             return results
 
-        with ThreadPoolExecutor(max_workers=10) as ex:
+        with ThreadPoolExecutor(max_workers=15) as ex:
             futures = [ex.submit(check_cinema, c) for c in sample]
             for fut in as_completed(futures):
                 for title, label in fut.result().items():
