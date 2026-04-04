@@ -10,12 +10,16 @@ import re
 from datetime import datetime, timedelta
 from typing import List
 
+import requests
+
 from .base import BaseChecker, MovieInfo
 
-CGV_MOVIES_URL = "https://www.cgv.co.kr/movies/"
-CGV_THEATERS_URL = "https://www.cgv.co.kr/theaters/"
-CGV_SCHEDULE_URL = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
-CGV_DETAIL_BASE = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
+CGV_MOVIES_URL    = "https://www.cgv.co.kr/movies/"
+CGV_THEATERS_URL  = "https://www.cgv.co.kr/theaters/"
+CGV_SCHEDULE_URL  = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
+CGV_DETAIL_BASE   = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
+CGV_REGION_API    = "https://api.cgv.co.kr/cnm/site/searchAllRegionAndSite?coCd=A420"
+CGV_SITE_API      = "https://api.cgv.co.kr/cnm/atkt/searchRegnList?coCd=A420"
 
 
 class CGVChecker(BaseChecker):
@@ -57,12 +61,8 @@ class CGVChecker(BaseChecker):
                     extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
                 )
 
-                # 1. 지점 목록 페이지에서 지점 코드 수집
-                page = ctx.new_page()
-                page.goto(CGV_THEATERS_URL, wait_until="networkidle", timeout=30000)
-                theater_html = page.content()
-                theaters = self._parse_theaters(theater_html, branch_keywords)
-
+                # 1. API로 지점 목록 조회
+                theaters = self._get_theaters_from_api(branch_keywords)
                 if not theaters:
                     print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
                     browser.close()
@@ -144,40 +144,36 @@ class CGVChecker(BaseChecker):
                 ))
         return movies
 
-    def _parse_theaters(self, html: str, branch_keywords: List[str]) -> List[dict]:
-        """CGV 지점 목록 페이지에서 키워드 일치 지점의 areacode·theatercode 추출."""
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "lxml")
+    def _get_theaters_from_api(self, branch_keywords: List[str]) -> List[dict]:
+        """CGV API로 전체 지점 목록을 조회해 키워드 일치 지점 반환."""
+        headers = {**self.HEADERS, "Referer": "https://www.cgv.co.kr/"}
+        try:
+            resp = requests.get(CGV_REGION_API, headers=headers, timeout=10)
+            resp.raise_for_status()
+            regions = resp.json().get("data", {}).get("regionInfo", [])
+        except Exception as e:
+            print(f"[CGV] 지역 목록 조회 실패: {e}")
+            return []
+
         theaters = []
+        for region in regions:
+            area_code = region.get("comCdval", "")
+            try:
+                resp = requests.get(
+                    f"{CGV_SITE_API}&regnGrpCd={area_code}",
+                    headers=headers,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                sites = resp.json().get("data", {}).get("siteList", [])
+                for site in sites:
+                    name = site.get("siteNm", "")
+                    code = site.get("siteNo", "")
+                    if code and self.match_branch(name, branch_keywords):
+                        theaters.append({"name": name, "area": area_code, "code": code})
+            except Exception as e:
+                print(f"[CGV] 지역 {area_code} 지점 조회 실패: {e}")
 
-        # CGV 지점 목록: data-areacode, data-theatercode 속성 또는 링크 파라미터
-        all_names = [a.get_text(strip=True) for a in soup.select("a[href*='theatercode'], [data-theatercode]")]
-        print(f"[CGV] 전체 지점 파싱 수: {len(all_names)}, 샘플: {all_names[:10]}")
-
-        for a in soup.select("a[href*='theatercode'], [data-theatercode]"):
-            name = a.get_text(strip=True)
-            if not self.match_branch(name, branch_keywords):
-                continue
-
-            href = a.get("href", "")
-            area = (
-                a.get("data-areacode")
-                or re.search(r"areacode=(\w+)", href, re.I) and
-                   re.search(r"areacode=(\w+)", href, re.I).group(1)
-                or ""
-            )
-            code = (
-                a.get("data-theatercode")
-                or re.search(r"theatercode=(\w+)", href, re.I) and
-                   re.search(r"theatercode=(\w+)", href, re.I).group(1)
-                or ""
-            )
-            if code:
-                theaters.append({"name": name, "area": area, "code": code})
-
-        print(f"[CGV] 전체 파싱된 지점 수: {len(theaters)}")
-        if theaters:
-            print(f"[CGV] 지점 샘플: {[t['name'] for t in theaters[:10]]}")
         return theaters
 
     # ── 이벤트 라벨 감지 ─────────────────────────────────────────────
