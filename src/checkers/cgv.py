@@ -258,15 +258,13 @@ class CGVChecker(BaseChecker):
             print(f"[CGV] Playwright 조회 오류: {e}")
             return []
 
-    # ── 지점 지정: 영화별 상영 페이지로 지점 매칭 ───────────────────
+    # ── 지점 지정: Playwright + 프록시로 iframeTheater.aspx 조회 ──────
     def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright, days_ahead: int = 0) -> List[MovieInfo]:
-        import requests as req
-
-        branch_names = {t["name"] for t in _CGV_THEATERS if self.match_branch(t["name"], branch_keywords)}
-        if not branch_names:
+        matched = [t for t in _CGV_THEATERS if self.match_branch(t["name"], branch_keywords)]
+        if not matched:
             print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
             return []
-        print(f"[CGV] 대상 지점: {sorted(branch_names)}")
+        print(f"[CGV] 대상 지점: {sorted(t['name'] for t in matched)}")
 
         dates = [
             (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
@@ -274,51 +272,46 @@ class CGVChecker(BaseChecker):
         ]
 
         proxy_url = self._get_proxy()
-        session = req.Session()
-        session.headers.update({
-            "User-Agent": self.HEADERS["User-Agent"],
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ko-KR,ko;q=0.9",
-            "Referer": "https://www.cgv.co.kr/",
-        })
-        if proxy_url:
-            session.proxies.update({"http": proxy_url, "https": proxy_url})
-
-        # 1. /movies/ 에서 전체 영화 목록 + 코드 수집 (Playwright, 접근 가능)
-        global_movies = self._fetch_all(sync_playwright)
-        if not global_movies:
-            return []
+        pw_proxy = {"server": proxy_url} if proxy_url else None
 
         movies = []
         seen: set = set()
 
-        # 2. 영화별 상영 페이지(iframeMovie.aspx)로 지점 확인
-        for gm in global_movies:
-            movie_code = gm.booking_url.replace(CGV_DETAIL_BASE, "").strip()
-            if not movie_code:
-                continue
-            for date_str in dates:
-                url = (
-                    f"https://www.cgv.co.kr/common/showtimes/iframeMovie.aspx"
-                    f"?movieseq={movie_code}&date={date_str}"
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, proxy=pw_proxy)
+                ctx = browser.new_context(
+                    user_agent=self.HEADERS["User-Agent"],
+                    extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
                 )
-                try:
-                    resp = session.get(url, timeout=15)
-                    if resp.status_code != 200 or len(resp.text) < 3000:
-                        if date_str == dates[0]:
-                            print(f"[CGV] iframeMovie 접근: status={resp.status_code}, len={len(resp.text)}")
-                        break  # 첫 영화·날짜에서 접근 불가 확인 시 전체 중단
-                    branch_movies = self._parse_movie_schedule(
-                        resp.text, gm.title, gm.event_label, branch_names, date_str
-                    )
-                    for m in branch_movies:
-                        key = (m.title, m.branch, m.event_label, m.play_date)
-                        if key not in seen:
-                            seen.add(key)
-                            movies.append(m)
-                except Exception as e:
-                    print(f"[CGV] iframeMovie 오류: {e}")
-                    break
+                # CGV 메인 페이지 워밍업 (쿠키/세션 확보)
+                page = ctx.new_page()
+                page.goto(CGV_MOVIES_URL, wait_until="networkidle", timeout=30000)
+
+                for theater in matched:
+                    for date_str in dates:
+                        url = (
+                            f"{CGV_SCHEDULE_URL}"
+                            f"?TheaterCode={theater['code']}&date={date_str}"
+                        )
+                        try:
+                            page.goto(url, wait_until="networkidle", timeout=20000)
+                            html = page.content()
+                            if len(html) < 3000:
+                                print(f"[CGV] {theater['name']} {date_str}: HTML 짧음({len(html)}), 스킵")
+                                continue
+                            branch_movies = self._parse_schedule_page(html, theater["name"], date_str)
+                            for m in branch_movies:
+                                key = (m.title, m.branch, m.event_label, m.play_date)
+                                if key not in seen:
+                                    seen.add(key)
+                                    movies.append(m)
+                        except Exception as e:
+                            print(f"[CGV] {theater['name']} {date_str} 오류: {e}")
+
+                browser.close()
+        except Exception as e:
+            print(f"[CGV] Playwright 브라우저 오류: {e}")
 
         return movies
 
