@@ -2,8 +2,7 @@
 CGV 예매 가능 영화 체커 (Playwright 기반)
 
 지점 미지정: /movies/ 페이지 렌더링 → 예매하기 버튼 있는 영화 추출
-지점 지정:  /theaters/ 페이지 방문 → fetch/XHR 인터셉트 + 탭 클릭으로 지점 코드 수집
-           → HTML 직접 파싱 폴백 (onclick, data-* 속성)
+지점 지정:  정적 지점 DB에서 키워드 매칭 → 지점 코드 확보
            → /common/showtimes/iframeTheater.aspx 로 지점별 상영 스케줄 파싱
 """
 
@@ -14,43 +13,199 @@ from typing import List
 from .base import BaseChecker, MovieInfo
 
 CGV_MOVIES_URL   = "https://www.cgv.co.kr/movies/"
-CGV_THEATERS_URL = "https://www.cgv.co.kr/theaters/"
 CGV_SCHEDULE_URL = "https://www.cgv.co.kr/common/showtimes/iframeTheater.aspx"
 CGV_DETAIL_BASE  = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
 
-# fetch/XHR 인터셉터: 페이지 JS보다 먼저 주입하여 CGV 인증 요청까지 캡처
-_INTERCEPT_SCRIPT = """
-window.__cgv_captures = window.__cgv_captures || {};
-try { Object.defineProperty(navigator,'webdriver',{get:function(){return undefined;},configurable:true}); } catch(e){}
-(function() {
-  try {
-    var _f = window.fetch;
-    window.fetch = async function() {
-      var resp = await _f.apply(this, arguments);
-      var url = (typeof arguments[0] === 'string' ? arguments[0]
-                 : (arguments[0] && arguments[0].url)) || '';
-      if (url.indexOf('cgv.co.kr') !== -1) {
-        try { window.__cgv_captures[url] = await resp.clone().json(); } catch(e){}
-      }
-      return resp;
-    };
-  } catch(e){}
-  try {
-    var _xo = XMLHttpRequest.prototype.open;
-    var _xs = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function(m, url) {
-      this.__cgv_url = url; return _xo.apply(this, arguments);
-    };
-    XMLHttpRequest.prototype.send = function() {
-      this.addEventListener('load', function() {
-        if (this.__cgv_url && this.__cgv_url.indexOf('cgv.co.kr') !== -1)
-          try { window.__cgv_captures[this.__cgv_url] = JSON.parse(this.responseText); } catch(e){}
-      });
-      return _xs.apply(this, arguments);
-    };
-  } catch(e){}
-})();
-"""
+# ── 전국 CGV 지점 정적 DB (2026-04 기준) ──────────────────────────────────
+# api.cgv.co.kr 가 Oracle Cloud IP에서 차단되므로 정적으로 내장
+_CGV_THEATERS = [
+    # 서울 (01)
+    {"area": "01", "code": "0056", "name": "강남"},
+    {"area": "01", "code": "0001", "name": "강변"},
+    {"area": "01", "code": "0229", "name": "건대입구"},
+    {"area": "01", "code": "0366", "name": "고덕강일"},
+    {"area": "01", "code": "0010", "name": "구로"},
+    {"area": "01", "code": "0063", "name": "대학로"},
+    {"area": "01", "code": "0252", "name": "동대문"},
+    {"area": "01", "code": "0230", "name": "등촌"},
+    {"area": "01", "code": "0009", "name": "명동"},
+    {"area": "01", "code": "0057", "name": "미아"},
+    {"area": "01", "code": "0288", "name": "방학"},
+    {"area": "01", "code": "0030", "name": "불광"},
+    {"area": "01", "code": "0046", "name": "상봉"},
+    {"area": "01", "code": "0300", "name": "성신여대입구"},
+    {"area": "01", "code": "0276", "name": "수유"},
+    {"area": "01", "code": "0150", "name": "신촌아트레온"},
+    {"area": "01", "code": "P001", "name": "씨네드쉐프 압구정"},
+    {"area": "01", "code": "P013", "name": "씨네드쉐프 용산"},
+    {"area": "01", "code": "0040", "name": "압구정"},
+    {"area": "01", "code": "0112", "name": "여의도"},
+    {"area": "01", "code": "0292", "name": "연남"},
+    {"area": "01", "code": "0059", "name": "영등포타임스퀘어"},
+    {"area": "01", "code": "0074", "name": "왕십리"},
+    {"area": "01", "code": "0013", "name": "용산아이파크몰"},
+    {"area": "01", "code": "0131", "name": "중계"},
+    {"area": "01", "code": "0199", "name": "천호"},
+    {"area": "01", "code": "0107", "name": "청담씨네시티"},
+    {"area": "01", "code": "0223", "name": "피카디리1958"},
+    {"area": "01", "code": "0191", "name": "홍대"},
+    # 경기 (02)
+    {"area": "02", "code": "0260", "name": "경기광주"},
+    {"area": "02", "code": "0270", "name": "고양백석"},
+    {"area": "02", "code": "0374", "name": "고양행신"},
+    {"area": "02", "code": "0257", "name": "광교"},
+    {"area": "02", "code": "0266", "name": "광교상현"},
+    {"area": "02", "code": "0348", "name": "광명역"},
+    {"area": "02", "code": "0232", "name": "구리"},
+    {"area": "02", "code": "0358", "name": "구리갈매"},
+    {"area": "02", "code": "0344", "name": "기흥"},
+    {"area": "02", "code": "0278", "name": "김포"},
+    {"area": "02", "code": "0188", "name": "김포운양"},
+    {"area": "02", "code": "0298", "name": "김포한강"},
+    {"area": "02", "code": "0329", "name": "남양주화도"},
+    {"area": "02", "code": "0351", "name": "다산"},
+    {"area": "02", "code": "0236", "name": "동두천"},
+    {"area": "02", "code": "0124", "name": "동백"},
+    {"area": "02", "code": "0041", "name": "동수원"},
+    {"area": "02", "code": "0106", "name": "동탄"},
+    {"area": "02", "code": "0359", "name": "동탄그랑파사쥬"},
+    {"area": "02", "code": "0265", "name": "동탄역"},
+    {"area": "02", "code": "0233", "name": "동탄호수공원"},
+    {"area": "02", "code": "0226", "name": "배곧"},
+    {"area": "02", "code": "0155", "name": "범계"},
+    {"area": "02", "code": "0015", "name": "부천"},
+    {"area": "02", "code": "0194", "name": "부천역"},
+    {"area": "02", "code": "0242", "name": "산본"},
+    {"area": "02", "code": "0196", "name": "서현"},
+    {"area": "02", "code": "0143", "name": "소풍"},
+    {"area": "02", "code": "0274", "name": "스타필드시티위례"},
+    {"area": "02", "code": "0055", "name": "신세계경기"},
+    {"area": "02", "code": "0211", "name": "안산"},
+    {"area": "02", "code": "0279", "name": "안성"},
+    {"area": "02", "code": "0003", "name": "야탑"},
+    {"area": "02", "code": "0262", "name": "양주옥정"},
+    {"area": "02", "code": "0338", "name": "역곡"},
+    {"area": "02", "code": "0004", "name": "오리"},
+    {"area": "02", "code": "0307", "name": "오산중앙"},
+    {"area": "02", "code": "0271", "name": "용인"},
+    {"area": "02", "code": "0113", "name": "의정부"},
+    {"area": "02", "code": "0205", "name": "이천"},
+    {"area": "02", "code": "0054", "name": "일산"},
+    {"area": "02", "code": "0148", "name": "파주문산"},
+    {"area": "02", "code": "0371", "name": "파주운정"},
+    {"area": "02", "code": "0181", "name": "판교"},
+    {"area": "02", "code": "0195", "name": "평촌"},
+    {"area": "02", "code": "0052", "name": "평택"},
+    {"area": "02", "code": "0334", "name": "평택고덕"},
+    {"area": "02", "code": "0214", "name": "평택소사"},
+    {"area": "02", "code": "0309", "name": "포천"},
+    {"area": "02", "code": "0301", "name": "화성봉담"},
+    {"area": "02", "code": "0145", "name": "화정"},
+    {"area": "02", "code": "0365", "name": "Drive In 용인 크랙사이드"},
+    # 인천 (03)
+    {"area": "03", "code": "0043", "name": "계양"},
+    {"area": "03", "code": "0021", "name": "부평"},
+    {"area": "03", "code": "0325", "name": "송도타임스페이스"},
+    {"area": "03", "code": "0002", "name": "인천"},
+    {"area": "03", "code": "0296", "name": "인천가정"},
+    {"area": "03", "code": "0340", "name": "인천도화"},
+    {"area": "03", "code": "0352", "name": "인천시민공원"},
+    {"area": "03", "code": "0258", "name": "인천연수"},
+    {"area": "03", "code": "0269", "name": "인천학익"},
+    {"area": "03", "code": "0308", "name": "주안역"},
+    {"area": "03", "code": "0235", "name": "청라"},
+    # 강원 (04)
+    {"area": "04", "code": "0139", "name": "강릉"},
+    {"area": "04", "code": "0355", "name": "기린"},
+    {"area": "04", "code": "0354", "name": "원통"},
+    {"area": "04", "code": "0281", "name": "인제"},
+    {"area": "04", "code": "0070", "name": "춘천"},
+    # 대전/충청 (05)
+    {"area": "05", "code": "0370", "name": "논산"},
+    {"area": "05", "code": "0207", "name": "당진"},
+    {"area": "05", "code": "0007", "name": "대전"},
+    {"area": "05", "code": "0286", "name": "대전가수원"},
+    {"area": "05", "code": "0154", "name": "대전가오"},
+    {"area": "05", "code": "0202", "name": "대전탄방"},
+    {"area": "05", "code": "0127", "name": "대전터미널"},
+    {"area": "05", "code": "0091", "name": "서산"},
+    {"area": "05", "code": "0219", "name": "세종"},
+    {"area": "05", "code": "0356", "name": "아산"},
+    {"area": "05", "code": "0206", "name": "유성노은"},
+    {"area": "05", "code": "0369", "name": "천안"},
+    {"area": "05", "code": "0293", "name": "천안터미널"},
+    {"area": "05", "code": "0110", "name": "천안펜타포트"},
+    {"area": "05", "code": "0228", "name": "청주(서문)"},
+    {"area": "05", "code": "0142", "name": "청주지웰시티"},
+    {"area": "05", "code": "0319", "name": "청주터미널"},
+    {"area": "05", "code": "0284", "name": "충북혁신"},
+    {"area": "05", "code": "0328", "name": "충주교현"},
+    {"area": "05", "code": "0217", "name": "홍성"},
+    # 대구 (06)
+    {"area": "06", "code": "0345", "name": "대구"},
+    {"area": "06", "code": "0108", "name": "대구스타디움"},
+    {"area": "06", "code": "0343", "name": "대구연경"},
+    {"area": "06", "code": "0216", "name": "대구월성"},
+    {"area": "06", "code": "0256", "name": "대구죽전"},
+    {"area": "06", "code": "0147", "name": "대구한일"},
+    {"area": "06", "code": "0109", "name": "대구현대"},
+    # 부산/울산 (07)
+    {"area": "07", "code": "0061", "name": "대연"},
+    {"area": "07", "code": "0042", "name": "동래"},
+    {"area": "07", "code": "0337", "name": "부산명지"},
+    {"area": "07", "code": "0005", "name": "서면"},
+    {"area": "07", "code": "0285", "name": "서면삼정타워"},
+    {"area": "07", "code": "0303", "name": "서면상상마당"},
+    {"area": "07", "code": "0089", "name": "센텀시티"},
+    {"area": "07", "code": "P004", "name": "씨네드쉐프 센텀"},
+    {"area": "07", "code": "0160", "name": "아시아드"},
+    {"area": "07", "code": "0335", "name": "울산동구"},
+    {"area": "07", "code": "0128", "name": "울산삼산"},
+    {"area": "07", "code": "0333", "name": "울산성남"},
+    {"area": "07", "code": "0264", "name": "울산신천"},
+    {"area": "07", "code": "0246", "name": "울산진장"},
+    {"area": "07", "code": "0306", "name": "정관"},
+    {"area": "07", "code": "0245", "name": "하단아트몰링"},
+    {"area": "07", "code": "0318", "name": "해운대"},
+    {"area": "07", "code": "0367", "name": "Drive In 영도"},
+    # 경상 (08)
+    {"area": "08", "code": "0263", "name": "거제"},
+    {"area": "08", "code": "0330", "name": "경산"},
+    {"area": "08", "code": "0323", "name": "고성"},
+    {"area": "08", "code": "0053", "name": "구미"},
+    {"area": "08", "code": "0240", "name": "김천율곡"},
+    {"area": "08", "code": "0028", "name": "김해"},
+    {"area": "08", "code": "0311", "name": "김해율하"},
+    {"area": "08", "code": "0239", "name": "김해장유"},
+    {"area": "08", "code": "0033", "name": "마산"},
+    {"area": "08", "code": "0097", "name": "북포항"},
+    {"area": "08", "code": "0272", "name": "안동"},
+    {"area": "08", "code": "0234", "name": "양산삼호"},
+    {"area": "08", "code": "0324", "name": "진주혁신"},
+    {"area": "08", "code": "0079", "name": "창원더시티"},
+    {"area": "08", "code": "0283", "name": "창원상남"},
+    # 광주/전라/제주 (09)
+    {"area": "09", "code": "0220", "name": "광양"},
+    {"area": "09", "code": "0221", "name": "광양 엘에프스퀘어"},
+    {"area": "09", "code": "0295", "name": "광주금남로"},
+    {"area": "09", "code": "0193", "name": "광주상무"},
+    {"area": "09", "code": "0210", "name": "광주용봉"},
+    {"area": "09", "code": "0218", "name": "광주첨단"},
+    {"area": "09", "code": "0244", "name": "광주충장로"},
+    {"area": "09", "code": "0215", "name": "광주하남"},
+    {"area": "09", "code": "0237", "name": "나주"},
+    {"area": "09", "code": "0280", "name": "목포평화광장"},
+    {"area": "09", "code": "0225", "name": "서전주"},
+    {"area": "09", "code": "0268", "name": "순천신대"},
+    {"area": "09", "code": "0315", "name": "여수웅천"},
+    {"area": "09", "code": "0020", "name": "익산"},
+    {"area": "09", "code": "0213", "name": "전주고사"},
+    {"area": "09", "code": "0336", "name": "전주에코시티"},
+    {"area": "09", "code": "0179", "name": "전주효자"},
+    {"area": "09", "code": "0186", "name": "정읍"},
+    {"area": "09", "code": "0302", "name": "제주"},
+    {"area": "09", "code": "0259", "name": "제주노형"},
+]
 
 
 class CGVChecker(BaseChecker):
@@ -82,43 +237,34 @@ class CGVChecker(BaseChecker):
             print(f"[CGV] 전체 조회 오류: {e}")
             return []
 
-    # ── 지점 지정: 지점별 상영 스케줄 조회 (N일치) ──────────────────
+    # ── 지점 지정: 지점별 상영 스케줄 조회 ──────────────────────────
     def _fetch_by_branches(self, branch_keywords: List[str], sync_playwright, days_ahead: int = 0) -> List[MovieInfo]:
+        # 정적 DB에서 키워드 매칭으로 지점 코드 조회
+        theaters = [t for t in _CGV_THEATERS if self.match_branch(t["name"], branch_keywords)]
+        if not theaters:
+            print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
+            return []
+        print(f"[CGV] 매칭 지점: {[t['name'] for t in theaters]}")
+
+        dates = [
+            (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
+            for d in range(days_ahead + 1)
+        ]
+
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(
                     headless=True,
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                    ],
+                    args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
                 )
                 ctx = browser.new_context(
                     user_agent=self.HEADERS["User-Agent"],
                     extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
                     viewport={"width": 1280, "height": 800},
                 )
-                # webdriver 감지 우회 (configurable:true 로 재정의 허용)
-                ctx.add_init_script(
-                    "try{Object.defineProperty(navigator,'webdriver',{get:function(){return undefined;},configurable:true});}catch(e){}"
-                )
-
-                theaters = self._get_theaters_via_playwright(ctx, branch_keywords)
-                if not theaters:
-                    print(f"[CGV] 일치하는 지점 없음: {branch_keywords}")
-                    browser.close()
-                    return []
-
-                dates = [
-                    (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
-                    for d in range(days_ahead + 1)
-                ]
-
+                sched_page = ctx.new_page()
                 movies = []
                 seen = set()
-                sched_page = ctx.new_page()
 
                 for theater in theaters:
                     for date_str in dates:
@@ -131,11 +277,8 @@ class CGVChecker(BaseChecker):
                         try:
                             sched_page.goto(url, wait_until="networkidle", timeout=20000)
                             schedule_html = sched_page.content()
-                            branch_movies = self._parse_schedule_page(
-                                schedule_html, theater["name"], date_str
-                            )
-                            for m in branch_movies:
-                                key = (m.title, m.branch, m.event_label, m.extra)
+                            for m in self._parse_schedule_page(schedule_html, theater["name"], date_str):
+                                key = (m.title, m.branch, m.event_label, m.play_date)
                                 if key not in seen:
                                     seen.add(key)
                                     movies.append(m)
@@ -147,134 +290,6 @@ class CGVChecker(BaseChecker):
         except Exception as e:
             print(f"[CGV] 지점별 조회 오류: {e}")
             return []
-
-    # ── 지점 코드 조회 ───────────────────────────────────────────────
-    def _get_theaters_via_playwright(self, ctx, branch_keywords: List[str]) -> List[dict]:
-        """theaters 페이지에서 지점 코드를 수집한다.
-
-        1순위: fetch/XHR 인터셉터로 searchRegnList API 응답 캡처
-        2순위: HTML 파싱 (onclick 패턴 / data-* 속성)
-        """
-        page = ctx.new_page()
-        theaters = []
-
-        # 페이지 JS보다 먼저 인터셉터 주입 (webdriver 우회는 ctx에서 이미 처리)
-        page.add_init_script(_INTERCEPT_SCRIPT)
-
-        try:
-            # /theaters/ 는 Oracle VM에서 에러 페이지 반환 → /movies/ 로 세션 확립
-            page.goto(CGV_MOVIES_URL, wait_until="networkidle", timeout=30000)
-            page.wait_for_timeout(1500)
-
-            # ── 영화 페이지 컨텍스트에서 CGV API 직접 호출 ──────────────
-            # (axios 사용 가능하면 axios 인터셉터로 X-Signature 자동 추가)
-            result = page.evaluate("""async () => {
-                var info = {
-                    hasAxios: typeof axios !== 'undefined',
-                    hasFetch: typeof fetch !== 'undefined',
-                    cgvFuncs: Object.getOwnPropertyNames(window).filter(function(k){
-                        return /cgv|api|theater|cinema|site|region/i.test(k);
-                    }).slice(0, 20),
-                };
-
-                var REGION_URL = 'https://api.cgv.co.kr/cnm/site/searchAllRegionAndSite?coCd=A420';
-
-                // 1) axios 시도
-                if (typeof axios !== 'undefined') {
-                    try {
-                        var ar = await axios.get(REGION_URL);
-                        info.axiosStatus = ar.status;
-                        info.regions = ar.data && ar.data.data && ar.data.data.regionInfo;
-                        return info;
-                    } catch(e) {
-                        info.axiosError = e.toString();
-                    }
-                }
-
-                // 2) native fetch 시도
-                try {
-                    var r = await fetch(REGION_URL, { headers: { Accept: 'application/json' } });
-                    info.fetchStatus = r.status;
-                    if (r.ok) {
-                        var d = await r.json();
-                        info.regions = d.data && d.data.regionInfo;
-                    } else {
-                        info.fetchBody = await r.text();
-                    }
-                } catch(e) {
-                    info.fetchError = e.toString();
-                }
-                return info;
-            }""")
-
-            print(f"[CGV] hasAxios={result.get('hasAxios')}, fetchStatus={result.get('fetchStatus')}, "
-                  f"axiosStatus={result.get('axiosStatus')}")
-            print(f"[CGV] fetchError={result.get('fetchError')}, axiosError={result.get('axiosError')}")
-            print(f"[CGV] cgvFuncs={result.get('cgvFuncs')}")
-
-            regions = result.get("regions") or []
-            print(f"[CGV] 지역 수: {len(regions)}")
-
-            # 지역별 지점 목록 조회
-            for region in regions:
-                area_code = region.get("comCdval", "")
-                if not area_code:
-                    continue
-                sites_result = page.evaluate(f"""async () => {{
-                    var url = 'https://api.cgv.co.kr/cnm/atkt/searchRegnList?coCd=A420&regnGrpCd={area_code}';
-                    try {{
-                        if (typeof axios !== 'undefined') {{
-                            var r = await axios.get(url);
-                            return r.data && r.data.data && r.data.data.siteList || [];
-                        }}
-                        var r = await fetch(url, {{ headers: {{ Accept: 'application/json' }} }});
-                        if (!r.ok) return [];
-                        var d = await r.json();
-                        return d.data && d.data.siteList || [];
-                    }} catch(e) {{ return []; }}
-                }}""")
-                for site in (sites_result or []):
-                    name = site.get("siteNm", "")
-                    code = site.get("siteNo", "")
-                    if code and self.match_branch(name, branch_keywords):
-                        theaters.append({"name": name, "area": area_code, "code": code})
-
-        except Exception as e:
-            print(f"[CGV] 지점 조회 실패: {e}")
-        finally:
-            page.close()
-        return theaters
-
-    def _parse_theaters_from_html(self, html: str, branch_keywords: List[str]) -> List[dict]:
-        """theaters 페이지 HTML에서 지점 코드를 파싱한다 (폴백)."""
-        from bs4 import BeautifulSoup
-        theaters = []
-        soup = BeautifulSoup(html, "lxml")
-
-        # 패턴 1: data-theatercode / data-theater-code 속성
-        for el in soup.select("[data-theatercode], [data-theater-code], [data-siteNo]"):
-            name = el.get_text(strip=True)
-            code = (el.get("data-theatercode")
-                    or el.get("data-theater-code")
-                    or el.get("data-siteNo", ""))
-            area = (el.get("data-areacode")
-                    or el.get("data-area-code", ""))
-            if code and self.match_branch(name, branch_keywords):
-                theaters.append({"name": name, "area": area, "code": code})
-
-        # 패턴 2: onclick="...('areacode', 'theatercode')" 형식
-        if not theaters:
-            for el in soup.select("[onclick]"):
-                onclick = el.get("onclick", "")
-                m = re.search(r"['\"](\d{2})['\"].*?['\"](\d{4})['\"]", onclick)
-                if m:
-                    area, code = m.group(1), m.group(2)
-                    name = el.get_text(strip=True)
-                    if self.match_branch(name, branch_keywords):
-                        theaters.append({"name": name, "area": area, "code": code})
-
-        print(f"[CGV] HTML 파싱 결과: {len(theaters)}개")
-        return theaters
 
     # ── 파싱 ────────────────────────────────────────────────────
     def _parse_movies_page(self, html: str) -> List[MovieInfo]:
@@ -314,7 +329,6 @@ class CGVChecker(BaseChecker):
                 ))
         return movies
 
-    # ── 이벤트 라벨 감지 ─────────────────────────────────────────────
     _EVENT_KEYWORDS = ["무대인사", "GV", "시사회", "무대 인사", "무대Q&A", "시네마톡"]
 
     def _detect_event_label(self, container) -> str:
@@ -328,9 +342,8 @@ class CGVChecker(BaseChecker):
                 for kw in self._EVENT_KEYWORDS:
                     if kw in text:
                         return kw
-        container_text = container.get_text()
         for kw in self._EVENT_KEYWORDS:
-            if kw in container_text:
+            if kw in container.get_text():
                 return kw
         return ""
 
