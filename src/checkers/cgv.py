@@ -20,7 +20,8 @@ CGV_DETAIL_BASE  = "https://www.cgv.co.kr/movies/detail.aspx?MovieSeq="
 
 # fetch/XHR 인터셉터: 페이지 JS보다 먼저 주입하여 CGV 인증 요청까지 캡처
 _INTERCEPT_SCRIPT = """
-window.__cgv_captures = {};
+window.__cgv_captures = window.__cgv_captures || {};
+try { Object.defineProperty(navigator,'webdriver',{get:function(){return undefined;},configurable:true}); } catch(e){}
 (function() {
   try {
     var _f = window.fetch;
@@ -99,9 +100,9 @@ class CGVChecker(BaseChecker):
                     extra_http_headers={"Accept-Language": "ko-KR,ko;q=0.9"},
                     viewport={"width": 1280, "height": 800},
                 )
-                # webdriver 감지 우회
+                # webdriver 감지 우회 (configurable:true 로 재정의 허용)
                 ctx.add_init_script(
-                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+                    "try{Object.defineProperty(navigator,'webdriver',{get:function(){return undefined;},configurable:true});}catch(e){}"
                 )
 
                 theaters = self._get_theaters_via_playwright(ctx, branch_keywords)
@@ -157,11 +158,8 @@ class CGVChecker(BaseChecker):
         page = ctx.new_page()
         theaters = []
 
-        # 페이지 JS보다 먼저 인터셉터 + webdriver 우회 주입
-        page.add_init_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});\n"
-            + _INTERCEPT_SCRIPT
-        )
+        # 페이지 JS보다 먼저 인터셉터 주입 (webdriver 우회는 ctx에서 이미 처리)
+        page.add_init_script(_INTERCEPT_SCRIPT)
 
         try:
             # 메인 페이지 먼저 방문해서 세션/쿠키 세팅
@@ -183,7 +181,7 @@ class CGVChecker(BaseChecker):
                     hasTheaterCode: html.indexOf('theatercode') !== -1 || html.indexOf('theaterCode') !== -1,
                     hasSiteNo: html.indexOf('siteNo') !== -1,
                     hasAreaCode: html.indexOf('areacode') !== -1 || html.indexOf('areaCode') !== -1,
-                    captureKeys: Object.keys(window.__cgv_captures),
+                    captureKeys: Object.keys(window.__cgv_captures || {}),
                     areaTabCount: document.querySelectorAll(
                         'ul.list-area>li, #ulArea>li, .area-tab li, [class*="area"]>li'
                     ).length,
@@ -227,7 +225,7 @@ class CGVChecker(BaseChecker):
                 page.wait_for_timeout(1000)
 
             # ── 1순위: 인터셉터 캡처 결과 처리 ──────────────────────
-            captures = page.evaluate("() => window.__cgv_captures")
+            captures = page.evaluate("() => window.__cgv_captures || {}")
             print(f"[CGV] 캡처된 API 수: {len(captures)}")
             for c_url, data in captures.items():
                 print(f"[CGV]   - {c_url[:80]}")
