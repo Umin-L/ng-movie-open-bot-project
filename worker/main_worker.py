@@ -120,10 +120,14 @@ def _send_telegram_message(chat_id: str, text: str) -> bool:
         return False
 
 
-# ── 텔레그램 알림 (날짜별 메시지 분리) ──────────────────────
+# ── 텔레그램 알림 (날짜별 + 청크 분리, 중복 압축) ───────────
 def send_telegram(chat_id: str, movies: list) -> bool:
-    # play_date 기준으로 그룹핑 (없으면 "" 키로)
     from collections import defaultdict
+
+    THEATER_ICON = {"롯데시네마": "🔴", "메가박스": "🟣"}
+    TG_MAX = 3800  # 텔레그램 4096자 제한에 여유
+
+    # play_date 기준으로 그룹핑
     groups = defaultdict(list)
     for m in movies:
         groups[m.play_date].append(m)
@@ -133,23 +137,50 @@ def send_telegram(chat_id: str, movies: list) -> bool:
         group = groups[date_key]
         if date_key:
             date_display = f"{date_key[:4]}-{date_key[4:6]}-{date_key[6:]}"
-            lines = [f"🎬 *영화 예매 오픈 알림! ({date_display})*\n"]
+            header = f"🎬 *영화 예매 오픈 알림! ({date_display})*"
         else:
-            lines = ["🎬 *영화 예매 오픈 알림!*\n"]
+            header = "🎬 *영화 예매 오픈 알림!*"
 
-        THEATER_ICON = {"CGV": "⚫️", "롯데시네마": "🔴", "메가박스": "🟣"}
+        # (title, theater, event_label) 기준으로 중복 압축, 지점 목록 수집
+        seen: dict = {}  # key → {"theater": str, "branches": set, "event_label": str}
         for m in group:
-            icon       = THEATER_ICON.get(m.theater, "🎬")
-            branch_str = f" ({m.branch})" if m.branch else ""
-            event_str  = f" 🎤 *{m.event_label}*" if m.event_label else ""
-            lines.append(f"{icon} *{m.theater}{branch_str}* — {m.title}{event_str}")
-            if m.extra:
-                lines.append(f"  _{m.extra}_")
-            lines.append("")
+            key = (m.title, m.theater, m.event_label)
+            if key not in seen:
+                seen[key] = {"theater": m.theater, "branches": set(), "event_label": m.event_label}
+            if m.branch:
+                seen[key]["branches"].add(m.branch)
 
-        text = "\n".join(lines).strip()
-        if not _send_telegram_message(chat_id, text):
-            success = False
+        # 알림 라인 생성
+        movie_lines = []
+        for (title, _, event_label), info in seen.items():
+            icon       = THEATER_ICON.get(info["theater"], "🎬")
+            branches   = sorted(info["branches"])
+            if branches:
+                branch_str = f" ({branches[0]}" + (f" 외 {len(branches)-1}개" if len(branches) > 1 else "") + ")"
+            else:
+                branch_str = ""
+            event_str  = f" 🎤 *{event_label}*" if event_label else ""
+            movie_lines.append(f"{icon} *{info['theater']}{branch_str}* — {title}{event_str}")
+
+        # 메시지가 너무 길면 청크로 분할
+        chunks = []
+        current = []
+        for line in movie_lines:
+            # 헤더 + 현재 누적 + 새 줄 길이 체크
+            body = "\n".join(current + [line])
+            if current and len(header) + 2 + len(body) > TG_MAX:
+                chunks.append(list(current))
+                current = [line]
+            else:
+                current.append(line)
+        if current:
+            chunks.append(current)
+
+        for i, chunk in enumerate(chunks):
+            suffix = f" ({i+1}/{len(chunks)})" if len(chunks) > 1 else ""
+            text = header + suffix + "\n\n" + "\n".join(chunk)
+            if not _send_telegram_message(chat_id, text):
+                success = False
 
     return success
 
@@ -180,7 +211,7 @@ def check_for_user(cfg: dict) -> list:
                 labels = list({m.event_label for m in filtered})
                 print(f"    [{name}] 감지된 라벨: {labels}")
 
-            # 이벤트 필터 (시네마톡은 CGV 한정)
+            # 이벤트 필터 (ev_labels 설정 시에만 필터링, 미설정 시 전체 통과)
             CGV_ONLY_LABELS = {"시네마톡"}
             if ev_labels:
                 filtered = [
@@ -192,8 +223,6 @@ def check_for_user(cfg: dict) -> list:
                         and m.theater != "CGV"
                     )
                 ]
-            else:
-                filtered = [m for m in filtered if not m.event_label]
 
             all_movies.extend(filtered)
             print(f"    [{name}] 라벨 필터 후: {len(filtered)}개 최종 매칭")
@@ -256,9 +285,16 @@ def sync_state(user_id: str, current: list) -> None:
 
 
 def save_detections(user_id: str, movies: list) -> None:
-    """신규 감지 영화를 이력 테이블에 저장한다."""
+    """신규 감지 영화를 이력 테이블에 저장한다. (title+theater+event_label 기준 중복 제거)"""
     if not movies:
         return
+    seen: set = set()
+    deduped = []
+    for m in movies:
+        key = (m.title, m.theater, m.event_label)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(m)
     sb_post("detected_movies", [
         {
             "user_id":     user_id,
@@ -269,7 +305,7 @@ def save_detections(user_id: str, movies: list) -> None:
             "booking_url": m.booking_url,
             "detected_at": datetime.now(timezone.utc).isoformat(),
         }
-        for m in movies
+        for m in deduped
     ])
 
 
