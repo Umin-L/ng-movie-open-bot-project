@@ -156,7 +156,7 @@ def send_telegram(chat_id: str, movies: list) -> bool:
             icon       = THEATER_ICON.get(info["theater"], "🎬")
             branches   = sorted(info["branches"])
             if branches:
-                branch_str = f" ({branches[0]}" + (f" 외 {len(branches)-1}개" if len(branches) > 1 else "") + ")"
+                branch_str = f" ({', '.join(branches)})"
             else:
                 branch_str = ""
             event_str  = f" 🎤 *{event_label}*" if event_label else ""
