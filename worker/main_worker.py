@@ -141,25 +141,46 @@ def send_telegram(chat_id: str, movies: list) -> bool:
         else:
             header = "🎬 *영화 예매 오픈 알림!*"
 
-        # (title, theater, event_label) 기준으로 중복 압축, 지점 목록 수집
-        seen: dict = {}  # key → {"theater": str, "branches": set, "event_label": str}
+        # (title, theater, event_label) 기준으로 압축
+        # branch별 상영 시간 수집: key → {branch: [time, ...]}
+        seen: dict = {}
         for m in group:
             key = (m.title, m.theater, m.event_label)
             if key not in seen:
-                seen[key] = {"theater": m.theater, "branches": set(), "event_label": m.event_label}
+                seen[key] = {"theater": m.theater, "event_label": m.event_label, "branch_times": {}}
             if m.branch:
-                seen[key]["branches"].add(m.branch)
+                bt = seen[key]["branch_times"]
+                if m.branch not in bt:
+                    bt[m.branch] = []
+                # extra에서 시간만 추출 (예: "📅 2026-04-08 09:50" → "09:50")
+                time_part = ""
+                if m.extra:
+                    parts = m.extra.strip().split()
+                    # 마지막 HH:MM 형태 찾기
+                    for p in reversed(parts):
+                        if len(p) == 5 and p[2] == ":":
+                            time_part = p
+                            break
+                if time_part and time_part not in bt[m.branch]:
+                    bt[m.branch].append(time_part)
 
         # 알림 라인 생성
         movie_lines = []
         for (title, _, event_label), info in seen.items():
-            icon       = THEATER_ICON.get(info["theater"], "🎬")
-            branches   = sorted(info["branches"])
-            if branches:
-                branch_str = f" ({', '.join(branches)})"
+            icon      = THEATER_ICON.get(info["theater"], "🎬")
+            event_str = f" 🎤 *{event_label}*" if event_label else ""
+            bt = info["branch_times"]
+            if bt:
+                branch_parts = []
+                for branch in sorted(bt.keys()):
+                    times = sorted(bt[branch])
+                    if times:
+                        branch_parts.append(f"{branch}({', '.join(times)})")
+                    else:
+                        branch_parts.append(branch)
+                branch_str = f" ({', '.join(branch_parts)})"
             else:
                 branch_str = ""
-            event_str  = f" 🎤 *{event_label}*" if event_label else ""
             movie_lines.append(f"{icon} *{info['theater']}{branch_str}* — {title}{event_str}")
 
         # 메시지가 너무 길면 청크로 분할
