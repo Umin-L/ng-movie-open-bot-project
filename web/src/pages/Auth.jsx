@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
 export default function Auth() {
-  const [tab, setTab]           = useState('login')   // 'login' | 'register'
+  const [tab, setTab]           = useState('login')   // 'login' | 'register' | 'forgot'
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [inviteCode, setInvite] = useState('')
@@ -59,27 +59,42 @@ export default function Auth() {
     setLoading(false)
   }
 
+  const handleForgot = async (e) => {
+    e.preventDefault()
+    setLoading(true); setError(''); setSuccess('')
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + '/reset-password',
+    })
+    if (error) setError(error.message)
+    else setSuccess('비밀번호 재설정 링크를 이메일로 보냈습니다. 메일함을 확인해 주세요.')
+    setLoading(false)
+  }
+
+  const switchTab = (t) => { setTab(t); setError(''); setSuccess(''); setEmail(''); setPassword('') }
+
   return (
     <div className="auth-wrap">
       <div className="auth-card">
         <div className="auth-title">MovieAlert 🎬</div>
         <div className="auth-subtitle">영화 예매 오픈 알림 서비스</div>
 
-        <div className="auth-tabs">
-          <button
-            className={'auth-tab' + (tab === 'login' ? ' active' : '')}
-            onClick={() => { setTab('login'); setError(''); setSuccess('') }}
-          >로그인</button>
-          <button
-            className={'auth-tab' + (tab === 'register' ? ' active' : '')}
-            onClick={() => { setTab('register'); setError(''); setSuccess('') }}
-          >회원가입</button>
-        </div>
+        {tab !== 'forgot' && (
+          <div className="auth-tabs">
+            <button
+              className={'auth-tab' + (tab === 'login' ? ' active' : '')}
+              onClick={() => switchTab('login')}
+            >로그인</button>
+            <button
+              className={'auth-tab' + (tab === 'register' ? ' active' : '')}
+              onClick={() => switchTab('register')}
+            >회원가입</button>
+          </div>
+        )}
 
         {error   && <div className="alert alert-error">{error}</div>}
         {success && <div className="alert alert-success">{success}</div>}
 
-        {tab === 'login' ? (
+        {tab === 'login' && (
           <form onSubmit={handleLogin}>
             <div className="form-group">
               <label className="form-label">이메일</label>
@@ -94,8 +109,15 @@ export default function Auth() {
             <button type="submit" className="btn-primary" style={{ width:'100%' }} disabled={loading}>
               {loading ? <span className="spinner" /> : '로그인'}
             </button>
+            <div style={{ textAlign:'center', marginTop:'12px' }}>
+              <button type="button" className="btn-link" onClick={() => switchTab('forgot')}>
+                비밀번호를 잊으셨나요?
+              </button>
+            </div>
           </form>
-        ) : (
+        )}
+
+        {tab === 'register' && (
           <form onSubmit={handleRegister}>
             <div className="form-group">
               <label className="form-label">초대 코드</label>
@@ -117,6 +139,27 @@ export default function Auth() {
             <button type="submit" className="btn-primary" style={{ width:'100%' }} disabled={loading}>
               {loading ? <span className="spinner" /> : '회원가입'}
             </button>
+          </form>
+        )}
+
+        {tab === 'forgot' && (
+          <form onSubmit={handleForgot}>
+            <div style={{ marginBottom:'16px', color:'var(--text-sub)', fontSize:'0.9rem' }}>
+              가입한 이메일을 입력하면 비밀번호 재설정 링크를 보내드립니다.
+            </div>
+            <div className="form-group">
+              <label className="form-label">이메일</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="your@email.com" required />
+            </div>
+            <button type="submit" className="btn-primary" style={{ width:'100%' }} disabled={loading}>
+              {loading ? <span className="spinner" /> : '재설정 링크 전송'}
+            </button>
+            <div style={{ textAlign:'center', marginTop:'12px' }}>
+              <button type="button" className="btn-link" onClick={() => switchTab('login')}>
+                로그인으로 돌아가기
+              </button>
+            </div>
           </form>
         )}
       </div>

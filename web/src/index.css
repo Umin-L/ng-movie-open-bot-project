@@ -114,6 +114,11 @@ input:focus, select:focus { border-color: var(--primary); }
 }
 .btn-ghost:hover { background: var(--surface2); color: var(--text); }
 .btn-success { background: var(--success); color: #000; }
+.btn-link {
+  background: none; border: none; padding: 0;
+  color: var(--primary); font-size: 0.85rem; cursor: pointer; text-decoration: underline;
+}
+.btn-link:hover { color: var(--primary-hover); }
 
 /* ── 폼 ── */
 .form-group { margin-bottom: 18px; }
