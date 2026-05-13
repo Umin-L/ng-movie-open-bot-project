@@ -144,10 +144,7 @@ class LotteChecker(BaseChecker):
             print(f"[롯데시네마] 일치하는 지점 없음: {branch_keywords}")
             return []
 
-        dates = [
-            (datetime.now() + timedelta(days=d)).strftime("%Y-%m-%d")
-            for d in range(days_ahead + 1)
-        ]
+        dates = [(datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")]
 
         movies: List[MovieInfo] = []
         seen = set()

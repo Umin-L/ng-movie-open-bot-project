@@ -306,12 +306,7 @@ export default function Settings({ session }) {
         </div>
 
         <div className="form-group">
-          <label className="form-label">
-            며칠 앞까지 감시할지 &nbsp;
-            <span style={{ color: 'var(--primary)', fontWeight: 700 }}>
-              {daysAhead === 0 ? '오늘만' : `오늘 포함 ${daysAhead + 1}일 (${daysAhead}일 후까지)`}
-            </span>
-          </label>
+          <label className="form-label">감시할 날짜</label>
           <input
             type="date"
             min={(() => { const d = new Date(); return d.toISOString().slice(0,10) })()}
@@ -325,8 +320,7 @@ export default function Settings({ session }) {
             }}
           />
           <div className="form-hint">
-            지점 설정 시에만 적용됩니다. 날짜가 늘어날수록 체크 시간이 길어집니다.
-            무대인사는 3~7일 권장.
+            지점 설정 시에만 적용됩니다. 해당 날짜의 스케줄만 감시합니다.
           </div>
         </div>
 
