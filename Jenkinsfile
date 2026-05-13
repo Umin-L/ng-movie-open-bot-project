@@ -16,6 +16,10 @@ pipeline {
         ENV_FILE    = '/opt/moviealert/.env'
     }
 
+    triggers {
+        cron('* * * * *')
+    }
+
     options {
         // 이전 빌드가 아직 실행 중이면 스킵 (중복 실행 방지)
         disableConcurrentBuilds()
