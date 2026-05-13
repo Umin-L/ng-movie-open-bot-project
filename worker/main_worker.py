@@ -373,7 +373,7 @@ def main():
             if last_checked:
                 last_dt     = datetime.fromisoformat(last_checked.replace("Z", "+00:00"))
                 elapsed_min = (now_utc - last_dt).total_seconds() / 60
-                if elapsed_min < interval_min:
+                if elapsed_min < interval_min - 0.1:  # 6초 여유
                     print(f"    → 스킵 (인터벌 {interval_min}분, 경과 {elapsed_min:.1f}분)")
                     continue
 
