@@ -313,18 +313,17 @@ export default function Settings({ session }) {
             </span>
           </label>
           <input
-            type="range"
-            min={0} max={14} step={1}
-            value={daysAhead}
-            onChange={e => setDaysAhead(Number(e.target.value))}
-            style={{ padding: 0, cursor: 'pointer', accentColor: 'var(--primary)' }}
+            type="date"
+            min={(() => { const d = new Date(); return d.toISOString().slice(0,10) })()}
+            max={(() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0,10) })()}
+            value={(() => { const d = new Date(); d.setDate(d.getDate() + daysAhead); return d.toISOString().slice(0,10) })()}
+            onChange={e => {
+              const today = new Date(); today.setHours(0,0,0,0)
+              const picked = new Date(e.target.value)
+              const diff = Math.round((picked - today) / 86400000)
+              setDaysAhead(Math.max(0, Math.min(30, diff)))
+            }}
           />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            <span>오늘만</span>
-            <span>3일</span>
-            <span>7일</span>
-            <span>14일</span>
-          </div>
           <div className="form-hint">
             지점 설정 시에만 적용됩니다. 날짜가 늘어날수록 체크 시간이 길어집니다.
             무대인사는 3~7일 권장.
