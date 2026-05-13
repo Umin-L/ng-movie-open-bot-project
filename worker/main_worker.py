@@ -226,8 +226,11 @@ def check_for_user(cfg: dict) -> list:
             kw_arg = {"keywords": keywords} if isinstance(checker, LotteChecker) else {}
             movies   = checker.get_bookable_movies(branches=branches, days_ahead=days_ahead, **kw_arg)
             print(f"    [{name}] 전체 조회: {len(movies)}개")
+            if movies:
+                titles = sorted({m.title for m in movies})
+                print(f"    [{name}] 조회된 영화: {titles}")
             filtered = checker.filter_by_keywords(movies, keywords)
-            print(f"    [{name}] 키워드 필터 후: {len(filtered)}개")
+            print(f"    [{name}] 키워드 필터 후: {len(filtered)}개 (키워드: {keywords})")
             if filtered:
                 labels = list({m.event_label for m in filtered})
                 print(f"    [{name}] 감지된 라벨: {labels}")
