@@ -14,11 +14,21 @@ Jenkins(Oracle VM)에서 1분마다 실행됨
 
 import os
 import sys
-import json
+import time
+import logging
 import requests
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+
+# ── 로거 설정 ────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger(__name__)
 
 # ── 프로젝트 루트를 sys.path에 추가 ─────────────────────────
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -42,7 +52,7 @@ def _load_dotenv():
             key, _, val = line.partition("=")
             key = key.strip()
             val = val.strip().strip('"').strip("'")
-            if key and key not in os.environ:   # 이미 있으면 덮어쓰지 않음
+            if key and key not in os.environ:
                 os.environ[key] = val
 
 _load_dotenv()
@@ -100,24 +110,26 @@ def sb_delete(table: str, params: dict) -> None:
     resp.raise_for_status()
 
 
-# ── 텔레그램 단일 메시지 발송 ────────────────────────────────
+# ── 텔레그램 단일 메시지 발송 (재시도 포함) ─────────────────
 def _send_telegram_message(chat_id: str, text: str) -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    try:
-        resp = requests.post(url, json={
-            "chat_id":                  chat_id,
-            "text":                     text,
-            "parse_mode":               "Markdown",
-            "disable_web_page_preview": True,
-        }, timeout=10)
-        result = resp.json()
-        if not result.get("ok"):
-            print(f"  [텔레그램] 전송 실패: {result.get('description')}")
-            return False
-        return True
-    except Exception as e:
-        print(f"  [텔레그램] 오류: {e}")
-        return False
+    for attempt in range(3):
+        try:
+            resp = requests.post(url, json={
+                "chat_id":                  chat_id,
+                "text":                     text,
+                "parse_mode":               "Markdown",
+                "disable_web_page_preview": True,
+            }, timeout=10)
+            result = resp.json()
+            if result.get("ok"):
+                return True
+            logger.warning(f"  [텔레그램] 전송 실패: {result.get('description')}")
+        except Exception as e:
+            logger.error(f"  [텔레그램] 오류: {e}")
+        if attempt < 2:
+            time.sleep(2 ** attempt)  # 1초, 2초 후 재시도
+    return False
 
 
 # ── 텔레그램 알림 (날짜별 + 청크 분리, 중복 압축) ───────────
@@ -125,9 +137,8 @@ def send_telegram(chat_id: str, movies: list) -> bool:
     from collections import defaultdict
 
     THEATER_ICON = {"롯데시네마": "🔴", "메가박스": "🟣"}
-    TG_MAX = 3800  # 텔레그램 4096자 제한에 여유
+    TG_MAX = 3800
 
-    # play_date 기준으로 그룹핑
     groups = defaultdict(list)
     for m in movies:
         groups[m.play_date].append(m)
@@ -141,8 +152,6 @@ def send_telegram(chat_id: str, movies: list) -> bool:
         else:
             header = "🎬 *영화 예매 오픈 알림!*"
 
-        # (title, theater, event_label) 기준으로 압축
-        # branch별 상영 시간 수집: key → {branch: [time, ...]}
         seen: dict = {}
         for m in group:
             key = (m.title, m.theater, m.event_label)
@@ -152,11 +161,9 @@ def send_telegram(chat_id: str, movies: list) -> bool:
                 bt = seen[key]["branch_times"]
                 if m.branch not in bt:
                     bt[m.branch] = []
-                # extra에서 시간만 추출 (예: "📅 2026-04-08 09:50" → "09:50")
                 time_part = ""
                 if m.extra:
                     parts = m.extra.strip().split()
-                    # 마지막 HH:MM 형태 찾기
                     for p in reversed(parts):
                         if len(p) == 5 and p[2] == ":":
                             time_part = p
@@ -164,7 +171,6 @@ def send_telegram(chat_id: str, movies: list) -> bool:
                 if time_part and time_part not in bt[m.branch]:
                     bt[m.branch].append(time_part)
 
-        # 알림 라인 생성
         movie_lines = []
         for (title, _, event_label), info in seen.items():
             icon      = THEATER_ICON.get(info["theater"], "🎬")
@@ -174,20 +180,15 @@ def send_telegram(chat_id: str, movies: list) -> bool:
                 branch_parts = []
                 for branch in sorted(bt.keys()):
                     times = sorted(bt[branch])
-                    if times:
-                        branch_parts.append(f"{branch}({', '.join(times)})")
-                    else:
-                        branch_parts.append(branch)
+                    branch_parts.append(f"{branch}({', '.join(times)})" if times else branch)
                 branch_str = f" ({', '.join(branch_parts)})"
             else:
                 branch_str = ""
             movie_lines.append(f"{icon} *{info['theater']}{branch_str}* — {title}{event_str}")
 
-        # 메시지가 너무 길면 청크로 분할
         chunks = []
         current = []
         for line in movie_lines:
-            # 헤더 + 현재 누적 + 새 줄 길이 체크
             body = "\n".join(current + [line])
             if current and len(header) + 2 + len(body) > TG_MAX:
                 chunks.append(list(current))
@@ -206,7 +207,47 @@ def send_telegram(chat_id: str, movies: list) -> bool:
     return success
 
 
-# ── 사용자별 영화 체크 ──────────────────────────────────────
+# ── 체커 단위 실행 (병렬 호출용) ────────────────────────────
+CGV_ONLY_LABELS = {"시네마톡"}
+
+def _run_checker(checker, keywords, branches, days_from, days_ahead, ev_labels):
+    name = checker.__class__.__name__
+    try:
+        kw_arg = {"keywords": keywords} if isinstance(checker, LotteChecker) else {}
+        movies = checker.get_bookable_movies(
+            branches=branches, days_from=days_from, days_ahead=days_ahead, **kw_arg
+        )
+        logger.info(f"    [{name}] 전체 조회: {len(movies)}개")
+        if movies:
+            titles = sorted({m.title for m in movies})
+            logger.info(f"    [{name}] 조회된 영화: {titles}")
+
+        filtered = checker.filter_by_keywords(movies, keywords)
+        logger.info(f"    [{name}] 키워드 필터 후: {len(filtered)}개 (키워드: {keywords})")
+
+        if filtered:
+            labels = list({m.event_label for m in filtered})
+            logger.info(f"    [{name}] 감지된 라벨: {labels}")
+
+        if ev_labels:
+            filtered = [
+                m for m in filtered
+                if m.event_label
+                and any(el.lower() in m.event_label.lower() for el in ev_labels)
+                and not (
+                    any(lbl in m.event_label for lbl in CGV_ONLY_LABELS)
+                    and m.theater != "CGV"
+                )
+            ]
+
+        logger.info(f"    [{name}] 라벨 필터 후: {len(filtered)}개 최종 매칭")
+        return filtered
+    except Exception as e:
+        logger.error(f"    [{name}] 오류: {e}", exc_info=True)
+        return []
+
+
+# ── 사용자별 영화 체크 (체커 병렬 실행) ─────────────────────
 def check_for_user(cfg: dict) -> list:
     keywords   = cfg.get("movies", [])
     branches   = cfg.get("branches", []) or None
@@ -220,48 +261,23 @@ def check_for_user(cfg: dict) -> list:
     if cfg.get("megabox_enabled", True):
         checkers.append(MegaboxChecker())
 
+    if not checkers:
+        return []
+
     all_movies = []
-    for checker in checkers:
-        name = checker.__class__.__name__
-        try:
-            kw_arg = {"keywords": keywords} if isinstance(checker, LotteChecker) else {}
-            movies   = checker.get_bookable_movies(branches=branches, days_from=days_from, days_ahead=days_ahead, **kw_arg)
-            print(f"    [{name}] 전체 조회: {len(movies)}개")
-            if movies:
-                titles = sorted({m.title for m in movies})
-                print(f"    [{name}] 조회된 영화: {titles}")
-            filtered = checker.filter_by_keywords(movies, keywords)
-            print(f"    [{name}] 키워드 필터 후: {len(filtered)}개 (키워드: {keywords})")
-            if filtered:
-                labels = list({m.event_label for m in filtered})
-                print(f"    [{name}] 감지된 라벨: {labels}")
-
-            # 이벤트 필터 (ev_labels 설정 시에만 필터링, 미설정 시 전체 통과)
-            CGV_ONLY_LABELS = {"시네마톡"}
-            if ev_labels:
-                filtered = [
-                    m for m in filtered
-                    if m.event_label
-                    and any(el.lower() in m.event_label.lower() for el in ev_labels)
-                    and not (
-                        any(lbl in m.event_label for lbl in CGV_ONLY_LABELS)
-                        and m.theater != "CGV"
-                    )
-                ]
-
-            all_movies.extend(filtered)
-            print(f"    [{name}] 라벨 필터 후: {len(filtered)}개 최종 매칭")
-        except Exception as e:
-            print(f"    [{name}] 오류: {e}")
-            traceback.print_exc()
+    with ThreadPoolExecutor(max_workers=len(checkers)) as ex:
+        futures = {
+            ex.submit(_run_checker, c, keywords, branches, days_from, days_ahead, ev_labels): c
+            for c in checkers
+        }
+        for fut in as_completed(futures):
+            all_movies.extend(fut.result())
 
     return all_movies
 
 
 # ── 상태 비교 및 신규 감지 ──────────────────────────────────
 def detect_new(user_id: str, current: list) -> list:
-    # KST 자정 기준으로 오늘 저장된 상태만 "이미 감지됨"으로 처리
-    # → 날짜가 바뀌면 동일 영화도 다시 신규 감지 → 알림 재발송
     from datetime import timedelta
     KST = timezone(timedelta(hours=9))
     today_start_kst = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -277,7 +293,6 @@ def detect_new(user_id: str, current: list) -> list:
         (r["title"], r["theater"], r["branch"], r["event_label"], r.get("play_date", ""))
         for r in rows
     }
-
     return [
         m for m in current
         if (m.title, m.theater, m.branch, m.event_label, m.play_date) not in prev_keys
@@ -285,7 +300,6 @@ def detect_new(user_id: str, current: list) -> list:
 
 
 def sync_state(user_id: str, current: list) -> None:
-    """현재 목록으로 DB 상태를 전체 교체한다."""
     sb_delete("movie_states", {"user_id": f"eq.{user_id}"})
     if current:
         seen: set = set()
@@ -310,7 +324,6 @@ def sync_state(user_id: str, current: list) -> None:
 
 
 def save_detections(user_id: str, movies: list) -> None:
-    """신규 감지 영화를 이력 테이블에 저장한다. (title+theater+event_label 기준 중복 제거)"""
     if not movies:
         return
     seen: set = set()
@@ -337,9 +350,8 @@ def save_detections(user_id: str, movies: list) -> None:
 # ── 메인 ────────────────────────────────────────────────────
 def main():
     start_time = datetime.now()
-    print(f"[{start_time.strftime('%Y-%m-%d %H:%M:%S')}] MovieAlert 워커 시작")
+    logger.info(f"[{start_time.strftime('%Y-%m-%d %H:%M:%S')}] MovieAlert 워커 시작")
 
-    # 활성 사용자 조회 (telegram_chat_id 설정된 사용자만)
     try:
         profiles = sb_get("user_profiles", {
             "is_active":        "eq.true",
@@ -347,41 +359,37 @@ def main():
             "select":           "id,telegram_chat_id,last_checked_at",
         })
     except Exception as e:
-        print(f"[워커] Supabase 연결 실패: {e}")
+        logger.error(f"[워커] Supabase 연결 실패: {e}")
         sys.exit(1)
 
-    print(f"[워커] 활성 사용자 {len(profiles)}명")
+    logger.info(f"[워커] 활성 사용자 {len(profiles)}명")
     if not profiles:
-        print("[워커] 처리할 사용자 없음. 종료.")
+        logger.info("[워커] 처리할 사용자 없음. 종료.")
         return
 
     now_utc = datetime.now(timezone.utc)
 
-    # 사용자별 처리
     for profile in profiles:
         user_id = profile["id"]
         chat_id = profile["telegram_chat_id"]
-        print(f"\n  [사용자 {user_id[:8]}...]")
+        logger.info(f"\n  [사용자 {user_id[:8]}...]")
 
         try:
-            # 설정 조회
             cfg_rows = sb_get("user_configs", {
                 "user_id": f"eq.{user_id}",
-                "select":  "movies,branches,event_labels,cgv_enabled,lotte_enabled,megabox_enabled,check_days_from,check_days_ahead,check_interval_minutes",
+                "select":  "movies,branches,event_labels,lotte_enabled,megabox_enabled,check_days_from,check_days_ahead,check_interval_minutes",
             })
             cfg = cfg_rows[0] if cfg_rows else {}
 
-            # 인터벌 체크 — 설정한 주기가 지나지 않았으면 스킵
             interval_min = int(cfg.get("check_interval_minutes") or 5)
             last_checked = profile.get("last_checked_at")
             if last_checked:
                 last_dt     = datetime.fromisoformat(last_checked.replace("Z", "+00:00"))
                 elapsed_min = (now_utc - last_dt).total_seconds() / 60
-                if elapsed_min < interval_min - 0.1:  # 6초 여유
-                    print(f"    → 스킵 (인터벌 {interval_min}분, 경과 {elapsed_min:.1f}분)")
+                if elapsed_min < interval_min - 0.1:
+                    logger.info(f"    → 스킵 (인터벌 {interval_min}분, 경과 {elapsed_min:.1f}분)")
                     continue
 
-            # last_checked_at 업데이트
             requests.patch(
                 f"{SUPABASE_URL}/rest/v1/user_profiles",
                 headers=_HEADERS,
@@ -390,33 +398,28 @@ def main():
                 timeout=10,
             )
 
-            # 영화 체크
             current_movies = check_for_user(cfg)
-            print(f"    → 현재 예매가능: {len(current_movies)}개")
+            logger.info(f"    → 현재 예매가능: {len(current_movies)}개")
 
-            # 신규 감지
             new_movies = detect_new(user_id, current_movies)
-            print(f"    → 신규 감지: {len(new_movies)}개")
+            logger.info(f"    → 신규 감지: {len(new_movies)}개")
 
-            # 상태 동기화
             sync_state(user_id, current_movies)
 
-            # 신규 항목이 있으면 알림 + 이력 저장
             if new_movies:
                 save_detections(user_id, new_movies)
                 send_telegram(chat_id, new_movies)
                 for m in new_movies:
                     branch_str = f" ({m.branch})" if m.branch else ""
                     event_str  = f" [{m.event_label}]" if m.event_label else ""
-                    print(f"    ✉ [{m.theater}{branch_str}]{event_str} {m.title}")
+                    logger.info(f"    ✉ [{m.theater}{branch_str}]{event_str} {m.title}")
 
         except Exception as e:
-            print(f"  [오류] 사용자 {user_id[:8]} 처리 중 예외: {e}")
-            traceback.print_exc()
+            logger.error(f"  [오류] 사용자 {user_id[:8]} 처리 중 예외: {e}", exc_info=True)
             continue
 
     elapsed = (datetime.now() - start_time).total_seconds()
-    print(f"\n[워커] 완료 ({elapsed:.1f}초)")
+    logger.info(f"\n[워커] 완료 ({elapsed:.1f}초)")
 
 
 if __name__ == "__main__":
