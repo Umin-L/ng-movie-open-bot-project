@@ -91,14 +91,14 @@ export default function Dashboard({ session }) {
   const watchedMovies = config?.movies?.length ? config.movies.join(', ') : '전체'
   const watchedBranch = config?.branches?.length ? config.branches.join(', ') : '전국'
   const checkInterval = config?.check_interval_minutes ?? 5
+  const daysFrom      = config?.check_days_from  ?? 0
   const daysAhead     = config?.check_days_ahead ?? 0
 
   const watchDates = (() => {
-    const fmt   = d => `${d.getMonth() + 1}/${d.getDate()}`
-    const today = new Date()
-    if (daysAhead === 0) return fmt(today)
-    const last = new Date(today); last.setDate(today.getDate() + daysAhead)
-    return `${fmt(today)} ~ ${fmt(last)}`
+    const fmt  = d => `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+    const from = new Date(); from.setDate(from.getDate() + daysFrom)
+    const to   = new Date(); to.setDate(to.getDate() + daysAhead)
+    return daysFrom === daysAhead ? fmt(from) : `${fmt(from)} ~ ${fmt(to)}`
   })()
 
   // 통계
