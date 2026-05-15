@@ -211,6 +211,7 @@ def check_for_user(cfg: dict) -> list:
     keywords   = cfg.get("movies", [])
     branches   = cfg.get("branches", []) or None
     ev_labels  = cfg.get("event_labels", [])
+    days_from  = int(cfg.get("check_days_from", 0))
     days_ahead = int(cfg.get("check_days_ahead", 0))
 
     checkers = []
@@ -224,7 +225,7 @@ def check_for_user(cfg: dict) -> list:
         name = checker.__class__.__name__
         try:
             kw_arg = {"keywords": keywords} if isinstance(checker, LotteChecker) else {}
-            movies   = checker.get_bookable_movies(branches=branches, days_ahead=days_ahead, **kw_arg)
+            movies   = checker.get_bookable_movies(branches=branches, days_from=days_from, days_ahead=days_ahead, **kw_arg)
             print(f"    [{name}] 전체 조회: {len(movies)}개")
             if movies:
                 titles = sorted({m.title for m in movies})
@@ -366,7 +367,7 @@ def main():
             # 설정 조회
             cfg_rows = sb_get("user_configs", {
                 "user_id": f"eq.{user_id}",
-                "select":  "movies,branches,event_labels,cgv_enabled,lotte_enabled,megabox_enabled,check_days_ahead,check_interval_minutes",
+                "select":  "movies,branches,event_labels,cgv_enabled,lotte_enabled,megabox_enabled,check_days_from,check_days_ahead,check_interval_minutes",
             })
             cfg = cfg_rows[0] if cfg_rows else {}
 

@@ -56,10 +56,10 @@ class LotteChecker(BaseChecker):
             "Referer": "https://www.lottecinema.co.kr/NLCJHS/Ticketing",
         }
 
-    def get_bookable_movies(self, branches: List[str] = None, days_ahead: int = 0,
-                             keywords: List[str] = None) -> List[MovieInfo]:
+    def get_bookable_movies(self, branches: List[str] = None, days_from: int = 0,
+                             days_ahead: int = 0, keywords: List[str] = None) -> List[MovieInfo]:
         if branches:
-            return self._fetch_by_branches(branches, days_ahead)
+            return self._fetch_by_branches(branches, days_from, days_ahead)
         return self._fetch_all(keywords=keywords)
 
     # ── 지점 지정 없음: 전국 예매 가능 목록 + 키워드 매칭 영화만 이벤트 보완 ──
@@ -137,14 +137,17 @@ class LotteChecker(BaseChecker):
         )
 
     # ── 지점 지정: GetPlaySequence 기반 스케줄 조회 (날짜/시간 포함) ──
-    def _fetch_by_branches(self, branch_keywords: List[str], days_ahead: int = 0) -> List[MovieInfo]:
+    def _fetch_by_branches(self, branch_keywords: List[str], days_from: int = 0, days_ahead: int = 0) -> List[MovieInfo]:
         cinemas = self._get_cinema_list()
         matched = [c for c in cinemas if self.match_branch(c["name"], branch_keywords)]
         if not matched:
             print(f"[롯데시네마] 일치하는 지점 없음: {branch_keywords}")
             return []
 
-        dates = [(datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")]
+        dates = [
+            (datetime.now() + timedelta(days=d)).strftime("%Y-%m-%d")
+            for d in range(days_from, days_ahead + 1)
+        ]
 
         movies: List[MovieInfo] = []
         seen = set()

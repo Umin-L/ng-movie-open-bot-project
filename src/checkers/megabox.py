@@ -20,35 +20,39 @@ MEGABOX_DETAIL_BASE = "https://www.megabox.co.kr/movie/detail"
 
 
 class MegaboxChecker(BaseChecker):
-    def get_bookable_movies(self, branches: List[str] = None, days_ahead: int = 0) -> List[MovieInfo]:
+    def get_bookable_movies(self, branches: List[str] = None, days_from: int = 0, days_ahead: int = 0) -> List[MovieInfo]:
         if branches:
-            return self._fetch_by_branches(branches, days_ahead)
-        return self._fetch_all(days_ahead)
+            return self._fetch_by_branches(branches, days_from, days_ahead)
+        return self._fetch_all(days_from, days_ahead)
 
     # ── 지점 지정 없음: 전국 스케줄 기반 (날짜/시간 포함) ───────────
-    def _fetch_all(self, days_ahead: int = 0) -> List[MovieInfo]:
+    def _fetch_all(self, days_from: int = 0, days_ahead: int = 0) -> List[MovieInfo]:
         headers = {
             **self.HEADERS,
             "Content-Type": "application/json; charset=UTF-8",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": "https://www.megabox.co.kr/booking/timetable",
         }
-        date_str = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y%m%d")
+        dates = [
+            (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
+            for d in range(days_from, days_ahead + 1)
+        ]
         all_schedules = []
-        try:
-            resp = requests.post(
-                MEGABOX_SCHEDULE_URL,
-                data=json.dumps({"masterType": "brch", "playDe": date_str}),
-                headers=headers,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            items = resp.json().get("megaMap", {}).get("movieFormList", [])
-            for item in items:
-                item["_play_date"] = date_str
-            all_schedules.extend(items)
-        except Exception as e:
-            print(f"[메가박스] 전국 스케줄 조회 실패 ({date_str}): {e}")
+        for date_str in dates:
+            try:
+                resp = requests.post(
+                    MEGABOX_SCHEDULE_URL,
+                    data=json.dumps({"masterType": "brch", "playDe": date_str}),
+                    headers=headers,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                items = resp.json().get("megaMap", {}).get("movieFormList", [])
+                for item in items:
+                    item["_play_date"] = date_str
+                all_schedules.extend(items)
+            except Exception as e:
+                print(f"[메가박스] 전국 스케줄 조회 실패 ({date_str}): {e}")
 
         movies: List[MovieInfo] = []
         seen = set()
@@ -95,7 +99,7 @@ class MegaboxChecker(BaseChecker):
         return movies
 
     # ── 지점 지정: N일치 스케줄 기반 ───────────────────────────────
-    def _fetch_by_branches(self, branch_keywords: List[str], days_ahead: int = 0) -> List[MovieInfo]:
+    def _fetch_by_branches(self, branch_keywords: List[str], days_from: int = 0, days_ahead: int = 0) -> List[MovieInfo]:
         headers = {
             **self.HEADERS,
             "Content-Type": "application/json; charset=UTF-8",
@@ -103,23 +107,26 @@ class MegaboxChecker(BaseChecker):
             "Referer": "https://www.megabox.co.kr/booking/timetable",
         }
 
-        date_str = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y%m%d")
-
+        dates = [
+            (datetime.now() + timedelta(days=d)).strftime("%Y%m%d")
+            for d in range(days_from, days_ahead + 1)
+        ]
         all_schedules = []
-        try:
-            resp = requests.post(
-                MEGABOX_SCHEDULE_URL,
-                data=json.dumps({"masterType": "brch", "playDe": date_str}),
-                headers=headers,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            items = resp.json().get("megaMap", {}).get("movieFormList", [])
-            for item in items:
-                item["_play_date"] = date_str
-            all_schedules.extend(items)
-        except Exception as e:
-            print(f"[메가박스] 지점별 스케줄 조회 실패 ({date_str}): {e}")
+        for date_str in dates:
+            try:
+                resp = requests.post(
+                    MEGABOX_SCHEDULE_URL,
+                    data=json.dumps({"masterType": "brch", "playDe": date_str}),
+                    headers=headers,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                items = resp.json().get("megaMap", {}).get("movieFormList", [])
+                for item in items:
+                    item["_play_date"] = date_str
+                all_schedules.extend(items)
+            except Exception as e:
+                print(f"[메가박스] 지점별 스케줄 조회 실패 ({date_str}): {e}")
 
         movies: List[MovieInfo] = []
         seen = set()

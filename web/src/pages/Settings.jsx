@@ -81,6 +81,7 @@ export default function Settings({ session }) {
   const [evLabels,  setEvLabels] = useState(DEFAULT_EVENT_LABELS)
   const [lotte,     setLotte]    = useState(true)
   const [megabox,   setMegabox]  = useState(true)
+  const [daysFrom,      setDaysFrom]     = useState(0)
   const [daysAhead,     setDaysAhead]    = useState(0)
   const [checkInterval, setCheckInterval] = useState(5)
 
@@ -108,6 +109,7 @@ export default function Settings({ session }) {
       setEvLabels(cfg.event_labels || DEFAULT_EVENT_LABELS)
       setLotte(cfg.lotte_enabled ?? true)
       setMegabox(cfg.megabox_enabled ?? true)
+      setDaysFrom(cfg.check_days_from ?? 0)
       setDaysAhead(cfg.check_days_ahead ?? 0)
       setCheckInterval(cfg.check_interval_minutes ?? 5)
     }
@@ -139,6 +141,7 @@ export default function Settings({ session }) {
       event_labels:            evLabels,
       lotte_enabled:           lotte,
       megabox_enabled:         megabox,
+      check_days_from:         daysFrom,
       check_days_ahead:        daysAhead,
       check_interval_minutes:  checkInterval,
       updated_at:              new Date().toISOString(),
@@ -306,21 +309,39 @@ export default function Settings({ session }) {
         </div>
 
         <div className="form-group">
-          <label className="form-label">감시할 날짜</label>
-          <input
-            type="date"
-            min={(() => { const d = new Date(); return d.toISOString().slice(0,10) })()}
-            max={(() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0,10) })()}
-            value={(() => { const d = new Date(); d.setDate(d.getDate() + daysAhead); return d.toISOString().slice(0,10) })()}
-            onChange={e => {
+          <label className="form-label">감시할 날짜 범위</label>
+          {(() => {
+            const todayStr = () => { const d = new Date(); return d.toISOString().slice(0,10) }
+            const maxStr   = () => { const d = new Date(); d.setMonth(d.getMonth() + 2); return d.toISOString().slice(0,10) }
+            const toDateStr = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().slice(0,10) }
+            const toDays = (val) => {
               const today = new Date(); today.setHours(0,0,0,0)
-              const picked = new Date(e.target.value)
-              const diff = Math.round((picked - today) / 86400000)
-              setDaysAhead(Math.max(0, Math.min(30, diff)))
-            }}
-          />
+              return Math.max(0, Math.round((new Date(val) - today) / 86400000))
+            }
+            return (
+              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:4 }}>From</div>
+                  <input type="date"
+                    min={todayStr()} max={toDateStr(daysAhead)}
+                    value={toDateStr(daysFrom)}
+                    onChange={e => setDaysFrom(Math.min(toDays(e.target.value), daysAhead))}
+                  />
+                </div>
+                <div style={{ paddingTop:18, color:'var(--text-muted)' }}>~</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:4 }}>To</div>
+                  <input type="date"
+                    min={toDateStr(daysFrom)} max={maxStr()}
+                    value={toDateStr(daysAhead)}
+                    onChange={e => setDaysAhead(Math.max(toDays(e.target.value), daysFrom))}
+                  />
+                </div>
+              </div>
+            )
+          })()}
           <div className="form-hint">
-            지점 설정 시에만 적용됩니다. 해당 날짜의 스케줄만 감시합니다.
+            지점 설정 시에만 적용됩니다. 오늘부터 최대 2개월 이내 선택 가능합니다.
           </div>
         </div>
 
